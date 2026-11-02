@@ -58,6 +58,20 @@ svk_status parsing_ras_conf(const std::string &ras_conf_path,
   return SVK_STATUS_SUCCESS;
 }
 
+static svk_status ras_logger_init(const ras_conf &ras_configs) {
+  if (svk_logger_init(RAS_LOGGER, ras_configs.log_file_name.c_str(),
+                      log_level_map.at(ras_configs.log_level),
+                      static_cast<int>(ras_configs.log_file_count),
+                      ras_configs.log_file_size,
+                      ras_configs.log_sink_type.c_str()) != 0) {
+    std::cerr << "ras logger init fail" << std::endl;
+    return SVK_STATUS_INVALID_CONFIG;
+  }
+  svk_logger(RAS_LOGGER, level_E::INFO,
+             "ras init called & logger is initialized");
+  return SVK_STATUS_SUCCESS;
+}
+
 // Exported entry points: signatures are fixed by svk-core's
 // framework_downstream.h, so pointer params cannot be made const (S995).
 //
@@ -81,19 +95,9 @@ extern "C" svk_status initialize(void *) {  // NOSONAR
   if (ras_configs->monitor_interval >= 15)
     g_monitor_interval = ras_configs->monitor_interval;
 
-  // TODO: in the next version with more stuff to init in this function
-  // we should refactor this init function and put logger related map &
-  // initialization in the ras_logger_init function
-  if (svk_logger_init(RAS_LOGGER, ras_configs->log_file_name.c_str(),
-                      log_level_map.at(ras_configs->log_level),
-                      static_cast<int>(ras_configs->log_file_count),
-                      ras_configs->log_file_size,
-                      ras_configs->log_sink_type.c_str()) == 0) {
-    svk_logger(RAS_LOGGER, level_E::INFO,
-               "ras init called & logger is initialized");
-  } else {
-    std::cerr << "ras logger init fail" << std::endl;
-    return SVK_STATUS_INVALID_CONFIG;
+  rc = ras_logger_init(*ras_configs);
+  if (rc != SVK_STATUS_SUCCESS) {
+    return rc;
   }
 
   std::lock_guard<std::mutex> lock(g_ras_context.ctx_mutex);
