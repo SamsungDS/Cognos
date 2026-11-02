@@ -14,8 +14,9 @@
 
 #define MPLOCKED "lock ; "
 /*------------------------- 32 bit atomic operations -------------------------*/
-static inline int rte_atomic32_cmpset(volatile uint32_t *dst, uint32_t exp,
-                                      uint32_t src) {
+/* dst is written by the cmpxchg asm below, so it cannot be const (S995) */
+static inline int rte_atomic32_cmpset(volatile uint32_t *dst,  // NOSONAR
+                                      uint32_t exp, uint32_t src) {
   uint8_t res;
 
   asm volatile(MPLOCKED

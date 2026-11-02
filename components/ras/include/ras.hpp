@@ -20,8 +20,7 @@
 
 constexpr const char *RAS_LOG = "ras_internal.log";
 
-// TODO: Hardcoding this path for now. This will be provided by the header from
-// the svk-core repo in the future
+// NOTE: Hardcoded until svk-core exposes this path in one of its headers
 constexpr const char *SVK_FEATURE_MODULE_PATH =
     "/usr/local/svk/feature_modules";
 
