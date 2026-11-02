@@ -29,6 +29,11 @@ done <<< "$tags"
 [[ $next == "$x_y.$((highest + 1))" ]] || fail "next patch is $next, expected $x_y.$((highest + 1))"
 echo "   $next"
 
+echo "-- the sync reaches every component repository's main"
+for repo in core mgmt-fw cxl slat ras svk-me svk-node sapp amo_prof; do
+    git ls-remote --exit-code "$CI_SERVER_URL/dfs/svk/$repo.git" main > /dev/null || fail "cannot read dfs/svk/$repo main"
+done
+
 echo "-- gitlab/scripts/api.py reads this pipeline's jobs"
 gitlab/scripts/api.py job-results --pipeline "$CI_PIPELINE_ID" > /dev/null || fail "api.py job-results failed"
 

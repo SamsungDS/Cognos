@@ -266,5 +266,106 @@ class PublishReleaseTest(ApiTestCase):
         self.assertEqual(len(release["assets"]["links"]), 2)
 
 
+class SyncTest(ApiTestCase):
+    """A monorepo with components imported as in the real one (subtree merge), and their repositories."""
+
+    def upstream(self, repo, content):
+        """A component repository (bare, at tmp/<repo>.git) whose main has a.txt with content."""
+        bare = self.tmp / f"{repo}.git"
+        bare.parent.mkdir(parents=True, exist_ok=True)
+        git(self.tmp, "init", "--quiet", "--bare", str(bare))
+        clone = self.tmp / ("clone-" + repo.replace("/", "-"))
+        git(self.tmp, "clone", "--quiet", str(bare), str(clone))
+        (clone / "a.txt").write_text(content)
+        git(clone, "add", "a.txt")
+        git(clone, "commit", "--quiet", "-m", f"{repo}: {content.strip()}")
+        git(clone, "push", "--quiet", "origin", "HEAD:main")
+        return clone
+
+    def change_upstream(self, clone, content):
+        (clone / "a.txt").write_text(content)
+        git(clone, "commit", "--quiet", "-am", f"change to {content.strip()}")
+        git(clone, "push", "--quiet", "origin", "HEAD:main")
+
+    def import_component(self, work, repo, prefix):
+        git(work, "fetch", "--quiet", str(self.tmp / f"{repo}.git"), "main")
+        git(work, "merge", "--quiet", "-s", "ours", "--no-commit", "--allow-unrelated-histories", "FETCH_HEAD")
+        git(work, "read-tree", f"--prefix={prefix}/", "-u", "FETCH_HEAD")
+        git(work, "commit", "--quiet", "-m", f"Import {repo} history")
+
+    def setUp(self):
+        super().setUp()
+        self.core = self.upstream("dfs/svk/core", "core 1\n")
+        self.ras = self.upstream("dfs/svk/ras", "ras 1\n")
+        self.work = self.repo(FILES)
+        self.import_component(self.work, "dfs/svk/core", "components/core")
+        self.import_component(self.work, "dfs/svk/ras", "components/ras")
+        git(self.work, "push", "--quiet", "origin", "main")
+        p = self.p
+        self.gitlab.route("GET", r"/api/v4/user", {"name": "Bot", "username": "bot", "email": "bot@example.com"})
+        self.gitlab.route("GET", rf"{p}/merge_requests\?state=opened&source_branch=sync%2F.*", [])
+        self.gitlab.route("POST", rf"{p}/merge_requests", lambda r: (201, {"iid": 1, "web_url": "https://mr/1"}))
+        self.origin = self.tmp / "work-origin.git"
+
+    def sync(self, only="core,ras"):
+        return self.api(self.work, "sync", "--only", only, SYNC_SOURCE_URL=f"file://{self.tmp}")
+
+    def mrs(self):
+        return [json.loads(r["body"]) for r in self.gitlab.sent("POST", rf"{self.p}/merge_requests")]
+
+    def test_changed_component_gets_a_merge_request(self):
+        self.change_upstream(self.core, "core 2\n")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("ras: up to date", result.stdout)
+        self.assertEqual(git(self.origin, "show", "sync/core:components/core/a.txt"), "core 2")
+        message = git(self.origin, "log", "-1", "--format=%B", "sync/core")
+        self.assertIn("git-subtree-dir: components/core", message)
+        self.assertIn(f"git-subtree-split: {git(self.core, 'rev-parse', 'HEAD')}", message)
+        self.assertEqual(git(self.origin, "log", "-1", "--format=%an", "sync/core"), "Bot")
+        mrs = self.mrs()
+        self.assertEqual([(m["source_branch"], m["target_branch"], m["squash"]) for m in mrs],
+                         [("sync/core", "main", False)])
+        self.assertIn("change to core 2", mrs[0]["description"])
+
+    def test_everything_up_to_date_does_nothing(self):
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mrs(), [])
+        self.assertEqual(git(self.origin, "branch", "--list", "sync/*"), "")
+
+    def test_open_merge_request_is_updated(self):
+        self.change_upstream(self.core, "core 2\n")
+        self.gitlab.route("GET", rf"{self.p}/merge_requests\?state=opened&source_branch=sync%2Fcore", [{"iid": 7}])
+        self.gitlab.route("PUT", rf"{self.p}/merge_requests/7", {"web_url": "https://mr/7"})
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.gitlab.sent("PUT", rf"{self.p}/merge_requests/7")), 1)
+        self.assertEqual(self.mrs(), [])
+
+    def test_conflict_fails_that_component_only(self):
+        (self.work / "components/core/a.txt").write_text("changed here\n")
+        git(self.work, "commit", "--quiet", "-am", "monorepo change")
+        git(self.work, "push", "--quiet", "origin", "main")
+        self.change_upstream(self.core, "changed there\n")
+        self.change_upstream(self.ras, "ras 2\n")
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("core: does not merge cleanly", result.stderr)
+        self.assertIn("components/core/a.txt", result.stderr)
+        self.assertEqual([m["source_branch"] for m in self.mrs()], ["sync/ras"])
+        self.assertEqual(git(self.origin, "branch", "--list", "sync/core"), "")
+
+    def test_unreachable_repository_is_reported(self):
+        result = self.sync(only="core,slat")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("slat: cannot fetch dfs/svk/slat", result.stderr)
+
+    def test_unknown_component(self):
+        result = self.sync(only="nope")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown components: nope", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
