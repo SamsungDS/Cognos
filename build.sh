@@ -195,68 +195,75 @@ build_docker() {
         "$image" ./build.sh --native --os "$OS" ${MOCK:+--mock} ${TEST:+--test} "$c"
 }
 
-NATIVE=
-OS=ubuntu24
-MOCK=
-TEST=
-REQUESTED=()
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --native) NATIVE=1 ;;
-        --os)
-            [[ $# -ge 2 ]] || die "--os needs a value"
-            OS=$2
-            shift
-            ;;
-        --mock) MOCK=1 ;;
-        --test) TEST=1 ;;
-        -h | --help)
-            usage
-            exit 0
-            ;;
-        -*) die "unknown option $1 (see -h)" ;;
-        *) REQUESTED+=("$1") ;;
+main() {
+    NATIVE=
+    OS=ubuntu24
+    MOCK=
+    TEST=
+    REQUESTED=()
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --native) NATIVE=1 ;;
+            --os)
+                [[ $# -ge 2 ]] || die "--os needs a value"
+                OS=$2
+                shift
+                ;;
+            --mock) MOCK=1 ;;
+            --test) TEST=1 ;;
+            -h | --help)
+                usage
+                exit 0
+                ;;
+            -*) die "unknown option $1 (see -h)" ;;
+            *) REQUESTED+=("$1") ;;
+        esac
+        shift
+    done
+
+    case $OS in
+        ubuntu24) PKG_EXT=deb ;;
+        ol10) PKG_EXT=rpm ;;
+        *) die "--os must be ubuntu24 or ol10, not $OS" ;;
     esac
-    shift
-done
 
-case $OS in
-    ubuntu24) PKG_EXT=deb ;;
-    ol10) PKG_EXT=rpm ;;
-    *) die "--os must be ubuntu24 or ol10, not $OS" ;;
-esac
+    for c in "${REQUESTED[@]}"; do
+        [[ " ${ALL_COMPONENTS[*]} " == *" $c "* ]] || die "unknown component $c (one of: ${ALL_COMPONENTS[*]})"
+    done
+    COMPONENTS=()
+    for c in "${ALL_COMPONENTS[@]}"; do
+        if [[ ${#REQUESTED[@]} -eq 0 || " ${REQUESTED[*]} " == *" $c "* ]]; then
+            COMPONENTS+=("$c")
+        fi
+    done
 
-for c in "${REQUESTED[@]}"; do
-    [[ " ${ALL_COMPONENTS[*]} " == *" $c "* ]] || die "unknown component $c (one of: ${ALL_COMPONENTS[*]})"
-done
-COMPONENTS=()
-for c in "${ALL_COMPONENTS[@]}"; do
-    if [[ ${#REQUESTED[@]} -eq 0 || " ${REQUESTED[*]} " == *" $c "* ]]; then
-        COMPONENTS+=("$c")
+    shopt -s nullglob
+    COGNOS_VERSION=${COGNOS_VERSION:-$("$ROOT/ci/version.sh")}
+    export COGNOS_VERSION
+    echo "Cognos version: $COGNOS_VERSION"
+
+    if [[ -n $NATIVE ]]; then
+        SUDO=
+        [[ $EUID -eq 0 ]] || SUDO=sudo
+        for c in "${COMPONENTS[@]}"; do
+            build_native "$c"
+        done
+    else
+        LAST_IMAGE=
+        trap restore_owner EXIT
+        trap 'exit 130' INT TERM
+        for c in "${COMPONENTS[@]}"; do
+            build_docker "$c"
+        done
     fi
-done
 
-shopt -s nullglob
-COGNOS_VERSION=${COGNOS_VERSION:-$("$ROOT/ci/version.sh")}
-export COGNOS_VERSION
-echo "Cognos version: $COGNOS_VERSION"
+    if [[ -z $TEST ]]; then
+        echo "Packages in build/artifacts/$OS:"
+        ls -1 "$ROOT/build/artifacts/$OS"
+    fi
+}
 
-if [[ -n $NATIVE ]]; then
-    SUDO=
-    [[ $EUID -eq 0 ]] || SUDO=sudo
-    for c in "${COMPONENTS[@]}"; do
-        build_native "$c"
-    done
-else
-    LAST_IMAGE=
-    trap restore_owner EXIT
-    trap 'exit 130' INT TERM
-    for c in "${COMPONENTS[@]}"; do
-        build_docker "$c"
-    done
-fi
-
-if [[ -z $TEST ]]; then
-    echo "Packages in build/artifacts/$OS:"
-    ls -1 "$ROOT/build/artifacts/$OS"
+# Sourced (by the tests): only the functions.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+    main "$@"
 fi

@@ -91,13 +91,14 @@ variables:
 # run in the image of their commit, $CI_REGISTRY_IMAGE/<component>:<os>-<sha>,
 # so overlapping pipelines never use each other's image.
 
-# Trust the internal CAs also in Python and curl, for downloads from this GitLab
-# (build.sh gets upstream packages from the dev set; the release jobs).
+# Trust the internal CAs also in Python, curl and git, for this GitLab's API,
+# downloads and repository (build.sh gets upstream packages from the dev set;
+# the release jobs read and write tags and branches).
 .internal-ca:
   before_script:
     - cat /etc/ssl/certs/ca-certificates.crt /etc/pki/tls/certs/ca-bundle.crt > /tmp/ca-bundle.crt 2> /dev/null || true
     - printf '%s\n' "$SSI_ROOTCA_CERT" "$SSI_ISSUINGCA_CERT" "$MSL_ETX_CERT" >> /tmp/ca-bundle.crt
-    - export SSL_CERT_FILE=/tmp/ca-bundle.crt
+    - export SSL_CERT_FILE=/tmp/ca-bundle.crt GIT_SSL_CAINFO=/tmp/ca-bundle.crt
 
 # The one version of every package in this pipeline (ci/version.sh).
 .version:
@@ -471,9 +472,11 @@ scan sapp:
 # failed job) republishes the set with the new results.
 # deploy/scripts/fetch-packages.py downloads a set for deployment.
 
-# Every component's builds (their packages) and tests (artifacts not needed).
+# Every component's builds (their packages) and tests (artifacts not needed),
+# and the tests of the CI scripts.
 .built and tested:
   needs:
+    - {job: test ci, optional: true}
     - {job: build core, optional: true}
     - {job: build mgmt-fw, optional: true}
     - {job: build node, optional: true}
@@ -504,9 +507,9 @@ publish dev set:
     - !reference [.internal-ca, before_script]
     - !reference [.version, before_script]
   script:
-    - gitlab/api.py job-results --pipeline "$CI_PIPELINE_ID" | tee results.json
+    - gitlab/scripts/api.py job-results --pipeline "$CI_PIPELINE_ID" | tee results.json
     # The newest set: the newest successful "publish dev set" on main, whatever its pipeline's status.
-    - gitlab/api.py newest-dev-set --out previous
+    - gitlab/scripts/api.py newest-dev-set --out previous
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --results results.json
       --previous previous/dev-set --out dev-set
@@ -520,7 +523,7 @@ publish dev set:
 # 6. Releases
 # ---------------------------------------------------------------------------
 # VERSION is the current release line X.Y; main builds X.(Y+1).0~dev. See
-# docs/ci.md, "Releases". The GitLab API calls are in gitlab/api.py and use
+# docs/ci.md, "Releases". The GitLab API calls are in gitlab/scripts/api.py and use
 # RELEASE_BOT_TOKEN (a protected variable), except "publish release".
 #
 #   propose release   main, run by hand: compatibility check, then the release
@@ -534,11 +537,13 @@ publish dev set:
 #   publish release   tag vX.Y.Z: packages to the package registry, and the
 #                     GitLab release
 
+# They wait for "test ci" when it runs, so a broken script never tags anything.
 .release job:
   stage: release
   image: python:3.12
   resource_group: release
-  needs: []
+  needs:
+    - {job: test ci, optional: true}
   before_script:
     - !reference [.internal-ca, before_script]
 
@@ -568,7 +573,7 @@ propose release:
     - KIND=$(ci/compat-check.sh --base "$BASE" --old old --new new --report report.md)
     - if [ "$KIND" = major ]; then NEXT=$((${X_Y%.*} + 1)).0; else NEXT=${X_Y%.*}.$((${X_Y#*.} + 1)); fi
     - echo "Proposed release $NEXT ($KIND)"
-    - gitlab/api.py propose --version "$NEXT" --report report.md
+    - gitlab/scripts/api.py propose --version "$NEXT" --report report.md
 
 create release:
   extends: .release job
@@ -580,21 +585,21 @@ create release:
     - when: manual
       allow_failure: true
   script:
-    - gitlab/api.py create-release
+    - gitlab/scripts/api.py create-release
 
 tag patch:
   extends: .release job
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^release\/[0-9]+\.[0-9]+$/
   script:
-    - gitlab/api.py tag-patch
+    - gitlab/scripts/api.py tag-patch
 
 backport:
   extends: .release job
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
   script:
-    - gitlab/api.py backport
+    - gitlab/scripts/api.py backport
 
 # A release needs every component built and tested in its tag pipeline.
 publish release:
@@ -608,11 +613,25 @@ publish release:
     - !reference [.version, before_script]
   script:
     - ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --complete --out release
-    - gitlab/api.py publish-release --dir release
+    - gitlab/scripts/api.py publish-release --dir release
 
 # ---------------------------------------------------------------------------
 # 7. Other jobs
 # ---------------------------------------------------------------------------
+
+# Unit tests of the CI scripts (ci/, gitlab/scripts/, build.sh, deploy/scripts/)
+# and read-only smoke tests against this GitLab. See gitlab/scripts/tests/.
+test ci:
+  stage: test
+  image: python:3.12
+  needs: []
+  rules:
+    - changes: [ci/**/*, gitlab/**/*, build.sh, deploy/scripts/**/*]
+  before_script:
+    - !reference [.internal-ca, before_script]
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends shellcheck > /dev/null
+  script:
+    - gitlab/scripts/tests/run.sh --smoke
 
 # Runs in every pipeline, so every merge request has one.
 check version:
