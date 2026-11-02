@@ -14,10 +14,13 @@ Usage: gitlab/scripts/api.py <command> [options]
                                       labelled backport-X.Y for, as a merge request into that branch
   publish-release --dir <dir>         upload a release set (ci/dev-set.py --complete) to the package registry
                                       and create the GitLab release for $CI_COMMIT_TAG
+  sync [--only <components>]          bring each component repository's main into its folder here (git subtree
+                                      merge, history kept), as one merge request per component
 
 Uses the CI variables CI_API_V4_URL, CI_PROJECT_ID, CI_PROJECT_PATH, CI_SERVER_URL, CI_SERVER_HOST, CI_COMMIT_SHA, and
-RELEASE_BOT_TOKEN (create-release, propose, tag-patch, backport) or CI_JOB_TOKEN (newest-dev-set, publish-release).
-job-results and newest-dev-set read the public pipeline API without a token.
+RELEASE_BOT_TOKEN (create-release, propose, tag-patch, backport, sync) or CI_JOB_TOKEN (newest-dev-set, publish-release).
+job-results and newest-dev-set read the public pipeline API without a token. sync reads the component
+repositories from SYNC_SOURCE_URL (default CI_SERVER_URL) without a token: they are public.
 Never prints a token.
 """
 
@@ -305,6 +308,86 @@ def publish_release(args):
     print(f"Created release {tag}")
 
 
+# sync: monorepo folder -> component repository (on this GitLab). deploy/ is owned by this repository; cama is a
+# submodule.
+COMPONENT_REPOS = {
+    "core": ("components/core", "dfs/svk/core"),
+    "mgmt-fw": ("components/mgmt-fw", "dfs/svk/mgmt-fw"),
+    "cxl": ("components/cxl", "dfs/svk/cxl"),
+    "slat": ("components/slat", "dfs/svk/slat"),
+    "ras": ("components/ras", "dfs/svk/ras"),
+    "me": ("components/me", "dfs/svk/svk-me"),
+    "node": ("components/node", "dfs/svk/svk-node"),
+    "sapp": ("apps/sapp", "dfs/svk/sapp"),
+    "amo-prof": ("profilers/amo-prof", "dfs/svk/amo_prof"),
+}
+
+
+def sync(args):
+    """For each component: if its repository's main is not yet in this main, merge it into the component's folder
+    (git merge -Xsubtree, what `git subtree pull` does, history kept) on sync/<component>, and open or update that
+    merge request. A component that does not merge cleanly is reported and the others continue."""
+    token = bot_token()
+    only = set(args.only.split(",")) if args.only else set(COMPONENT_REPOS)
+    unknown = only - set(COMPONENT_REPOS)
+    if unknown:
+        die(f"unknown components: {', '.join(sorted(unknown))}")
+    base = os.environ["CI_COMMIT_SHA"]
+    source = os.environ.get("SYNC_SOURCE_URL") or os.environ["CI_SERVER_URL"]
+    user = request("GET", f"{API}/user", token=token)
+    email = user.get("email") or user.get("commit_email") or f"{user['username']}@noreply.{os.environ['CI_SERVER_HOST']}"
+    env = dict(os.environ, GIT_AUTHOR_NAME=user["name"], GIT_AUTHOR_EMAIL=email,
+               GIT_COMMITTER_NAME=user["name"], GIT_COMMITTER_EMAIL=email)
+    auth = "Authorization: Basic " + base64.b64encode(f"oauth2:{token}".encode()).decode()
+    url = f"{os.environ['CI_SERVER_URL']}/{os.environ['CI_PROJECT_PATH']}.git"
+    failed = []
+    for component, (prefix, repo) in COMPONENT_REPOS.items():
+        if component not in only:
+            continue
+        fetched = run("git", "fetch", "--quiet", f"{source}/{repo}.git", "main", check=False)
+        if fetched.returncode != 0:
+            failed.append(f"{component}: cannot fetch {repo} ({fetched.stderr.strip()[-200:]})")
+            continue
+        upstream = run("git", "rev-parse", "FETCH_HEAD").stdout.strip()
+        if run("git", "merge-base", "--is-ancestor", upstream, base, check=False).returncode == 0:
+            print(f"{component}: up to date ({repo} main {upstream[:8]})")
+            continue
+        branch = f"sync/{component}"
+        new_commits = run("git", "log", "--no-merges", "--format=- `%h` %s", f"{base}..{upstream}").stdout.strip()
+        run("git", "checkout", "--quiet", "--force", "-B", branch, base)
+        # The trailers git subtree writes, so a later sync (or a person) can see what was merged.
+        message = f"Sync {component} from {repo} main\n\ngit-subtree-dir: {prefix}\ngit-subtree-split: {upstream}\n"
+        merged = subprocess.run(["git", "merge", "--quiet", "--no-ff", f"-Xsubtree={prefix}", "-m", message, upstream],
+                                cwd=ROOT, env=env, text=True, capture_output=True)
+        if merged.returncode != 0:
+            conflicts = run("git", "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+            run("git", "merge", "--abort", check=False)
+            failed.append(f"{component}: does not merge cleanly"
+                          + (f" (conflicts in {', '.join(conflicts)})" if conflicts else f": {merged.stderr.strip()[-200:]}"))
+            continue
+        pushed = subprocess.run(["git", "-c", f"http.extraHeader={auth}", "push", "--quiet", "--force", url,
+                                 f"HEAD:refs/heads/{branch}"], cwd=ROOT, text=True, capture_output=True)
+        if pushed.returncode != 0:
+            failed.append(f"{component}: push of {branch} failed ({pushed.stderr.strip()[-300:]})")
+            continue
+        title = f"Sync {component} from {repo} main"
+        description = (f"`{repo}` main (`{upstream[:8]}`) merged into `{prefix}` (git subtree merge, history kept). "
+                       f"Made by the nightly sync; it is updated, not duplicated, by the next sync.\n\n"
+                       f"New commits:\n{new_commits or '- (merge commits only)'}")
+        open_mrs = request("GET", f"/merge_requests?state=opened&source_branch={quote(branch)}", token=token) or []
+        if open_mrs:
+            mr = request("PUT", f"/merge_requests/{open_mrs[0]['iid']}", {"title": title, "description": description},
+                         token=token)
+        else:
+            mr = request("POST", "/merge_requests", {
+                "source_branch": branch, "target_branch": "main", "title": title, "description": description,
+                "remove_source_branch": True, "squash": False}, token=token)
+        print(f"{component}: {mr['web_url']}")
+    run("git", "checkout", "--quiet", "--force", base, check=False)
+    if failed:
+        die("components that did not sync (each needs a merge request by hand):\n  " + "\n  ".join(failed))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
@@ -317,9 +400,10 @@ def main():
     commands.add_parser("tag-patch")
     commands.add_parser("backport")
     commands.add_parser("publish-release").add_argument("--dir", required=True)
+    commands.add_parser("sync").add_argument("--only")
     args = parser.parse_args()
     {"job-results": job_results, "newest-dev-set": newest_dev_set, "create-release": create_release, "propose": propose, "tag-patch": tag_patch,
-     "backport": backport, "publish-release": publish_release}[args.command](args)
+     "backport": backport, "publish-release": publish_release, "sync": sync}[args.command](args)
 
 
 if __name__ == "__main__":

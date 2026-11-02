@@ -51,6 +51,7 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | test amo-prof | test | builds the amo-prof wheel and runs its tests |
 | publish dev set | publish | every `main` push, schedule and web run ([Dev sets](#dev-sets)) |
 | propose release, create release, tag patch, backport, publish release | release, publish | see [Releases](#releases) |
+| sync components | release | nightly schedule or by hand, with `SYNC_COMPONENTS=true` ([Sync](#sync)) |
 | test ci | test | the tests of the CI scripts ([Tests of the CI scripts](#tests-of-the-ci-scripts)) |
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
 | build ansible image, lint ansible | build-images, test | lint `deploy/` |
@@ -203,6 +204,27 @@ yet; that comes when the component repositories stop releasing.
 
 Deploying a release: `deploy/scripts/fetch-packages.py --os ubuntu24 --release vX.Y.Z`.
 
+## Sync
+
+Until the component repositories stop, their `main` branches are brought into this repository every night. For each
+of core, mgmt-fw, cxl, slat, ras, me (`svk-me`), node (`svk-node`), sapp and amo-prof (`amo_prof`) whose repository's
+`main` is not in this `main` yet, "sync components" merges it into the component's folder (a git subtree merge, so the
+history is kept) on `sync/<component>` and opens a merge request, or updates the open one. The merge request runs the
+normal pipeline for that component; you merge it. A component that does not merge cleanly (someone changed the same
+lines here) fails the job with its conflicting files and needs a merge request by hand; the others still sync.
+`deploy/` is owned by this repository and is not synced; `cama` is a submodule.
+
+It runs only when `SYNC_COMPONENTS` is `true`, on `main`:
+
+| What | How |
+|---|---|
+| Nightly: full build and tests, dev set refresh, and the sync | a pipeline schedule on `main` with the variable `SYNC_COMPONENTS` = `true` (Build → Pipeline schedules) |
+| Sync now | the schedule's ▶ Play, or Build → Pipelines → Run pipeline on `main` with `SYNC_COMPONENTS` = `true` |
+| Stop the sync, keep the nightly build | set `SYNC_COMPONENTS` to `false` in the schedule |
+| Stop the nightly pipeline | make the schedule inactive |
+
+The sync uses `RELEASE_BOT_TOKEN`: its merge requests and merge commits are made by that token's user.
+
 ## Tests of the CI scripts
 
 `gitlab/scripts/tests/run.sh` tests every script the pipeline runs: `build.sh`, `ci/version.sh`, `ci/image.sh`,
@@ -227,7 +249,7 @@ When changing a CI script, add or update its test in the same merge request.
 |---|---|---|
 | "Keep artifacts from most recent successful jobs" on (the default) | Settings → CI/CD → Artifacts | keeps the newest dev set until a newer one exists |
 | Public pipelines on (the default for a public project) | Settings → CI/CD → General pipelines | `fetch-packages.py` downloads without a token; otherwise users export `GITLAB_TOKEN` |
-| A schedule on `main`, e.g. nightly (recommended) | Build → Pipeline schedules | rebuilds and tests every component and publishes a fresh set every night, so a failed or stale component is retried and the newest set never expires |
+| A nightly schedule on `main` with the variable `SYNC_COMPONENTS` = `true` | Build → Pipeline schedules | the full build and tests, a fresh dev set (a failed or stale component is retried, and the newest set does not expire), and the [sync](#sync) |
 | `RELEASE_BOT_TOKEN`: Masked and hidden, Protected | Settings → CI/CD → Variables | the release jobs' GitLab API calls (an access token with the Maintainer role and the `api` and `write_repository` scopes) |
 | Protected branches `main` and `release/*`: allowed to merge "Maintainers" and the token's user; push "No one" | Settings → Repository → Protected branches | the token's protected variable is only available there; the token's user creates `release/X.Y` |
 | Protected tags `v*`: allowed to create "Maintainers" | Settings → Repository → Protected tags | only maintainers and the release jobs create release tags |
@@ -235,4 +257,4 @@ When changing a CI script, add or update its test in the same merge request.
 
 ## Later
 
-The sync from the component repositories, and publishing releases to Nexus.
+Publishing releases to Nexus, and retiring the component repositories and the sync.

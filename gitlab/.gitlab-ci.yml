@@ -11,7 +11,8 @@
 #   4. Components, one block each with all of its jobs
 #   5. Dev set
 #   6. Releases
-#   7. Other jobs: check version, amo-prof, ansible
+#   7. Sync from the component repositories
+#   8. Other jobs: check version, amo-prof, ansible
 #
 # The pipeline that came with deploy/ (deploy/.gitlab-ci.yml) is deliberately
 # not included. Its deploy stage restores VM snapshots and deploys as root to
@@ -616,7 +617,35 @@ publish release:
     - gitlab/scripts/api.py publish-release --dir release
 
 # ---------------------------------------------------------------------------
-# 7. Other jobs
+# 7. Sync from the component repositories
+# ---------------------------------------------------------------------------
+# Until the component repositories stop, their main branches are brought into
+# this repository: for each component whose repository's main is not here yet,
+# a merge request from sync/<component> (git subtree merge, history kept).
+# Runs only with SYNC_COMPONENTS=true on main: the nightly schedule sets it (so
+# the nightly pipeline is a full build, the dev set refresh and the sync), or a
+# run by hand (Build > Pipelines > Run pipeline, or the schedule's Play). To stop
+# the sync, set SYNC_COMPONENTS to false in the schedule; to stop the nightly
+# pipeline, make the schedule inactive. See docs/ci.md, "Sync".
+
+sync components:
+  stage: release
+  image: python:3.12
+  resource_group: sync
+  needs:
+    - {job: test ci, optional: true}
+  rules:
+    - if: $SYNC_COMPONENTS == "true" && $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE =~ /^(schedule|web)$/
+  variables:
+    # The merges need the components' history in this repository.
+    GIT_DEPTH: 0
+  before_script:
+    - !reference [.internal-ca, before_script]
+  script:
+    - gitlab/scripts/api.py sync
+
+# ---------------------------------------------------------------------------
+# 8. Other jobs
 # ---------------------------------------------------------------------------
 
 # Unit tests of the CI scripts (ci/, gitlab/scripts/, build.sh, deploy/scripts/)
