@@ -8,7 +8,8 @@
 | `ci/image.sh` | builds a component image, or reuses it when its inputs are unchanged | no |
 | `ci/dev-set.py` | assembles a dev set or a release, with its `set.json` | no |
 | `ci/compat-check.sh` | proposes a major or minor release (buf, abidiff) | no |
-| `gitlab/api.py` | the GitLab API calls: job results, release branches, tags, merge requests, backports, release upload | yes |
+| `gitlab/scripts/api.py` | the GitLab API calls: job results, release branches, tags, merge requests, backports, release upload | yes |
+| `gitlab/scripts/tests/` | tests of all of the above: `run.sh` (file modes, shellcheck, unit tests) and `smoke.sh` | the smoke tests only |
 | `deploy/scripts/fetch-packages.py` | puts the packages of a release, a dev set, a pipeline or a local build into `deploy/artifacts/SVK/` | uses the GitLab API to download |
 
 One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has seven sections: includes and workflow, what a
@@ -50,6 +51,7 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | test amo-prof | test | builds the amo-prof wheel and runs its tests |
 | publish dev set | publish | every `main` push, schedule and web run ([Dev sets](#dev-sets)) |
 | propose release, create release, tag patch, backport, publish release | release, publish | see [Releases](#releases) |
+| test ci | test | the tests of the CI scripts ([Tests of the CI scripts](#tests-of-the-ci-scripts)) |
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
 | build ansible image, lint ansible | build-images, test | lint `deploy/` |
 
@@ -200,6 +202,24 @@ They use `RELEASE_BOT_TOKEN`, except "publish release", which uses the job token
 yet; that comes when the component repositories stop releasing.
 
 Deploying a release: `deploy/scripts/fetch-packages.py --os ubuntu24 --release vX.Y.Z`.
+
+## Tests of the CI scripts
+
+`gitlab/scripts/tests/run.sh` tests every script the pipeline runs: `build.sh`, `ci/version.sh`, `ci/image.sh`,
+`ci/dev-set.py`, `ci/compat-check.sh`, `gitlab/scripts/api.py` and `deploy/scripts/fetch-packages.py`.
+
+- **File modes:** each of those scripts is executable in git.
+- **shellcheck** on the shell scripts.
+- **Unit tests** (`test_*.py`, Python's `unittest`, nothing to install). They need no network: a fake GitLab API
+  (`helpers.py`), throwaway git repositories with tags, and stand-in `docker`, `buf`, `abidiff` and `apt-get`.
+- **Smoke tests** (`smoke.sh`, with `--smoke`, CI only): read-only checks that the pipeline's environment reaches this
+  GitLab with git (release tags and the next release patch), Python (the API) and downloads (the newest dev set).
+
+The "test ci" job runs `run.sh --smoke` whenever `ci/`, `gitlab/`, `build.sh` or `deploy/scripts/` change, and in tag
+and scheduled pipelines. The release jobs and "publish dev set" wait for it, so a broken script never tags or publishes
+anything. Run the unit tests locally with `gitlab/scripts/tests/run.sh` (needs `shellcheck` and `dpkg-deb`).
+
+When changing a CI script, add or update its test in the same merge request.
 
 ## Required settings
 

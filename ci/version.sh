@@ -46,15 +46,18 @@ NEXT="$X.$((Y + 1)).0"
 # P + 1, where P is the highest X.Y patch released so far: this repository's
 # vX.Y.P tags and the imported component tags (<component>/vX.Y.P), so that no
 # version is ever reused. No release yet: 0.
+# Fails (never guesses 0) when origin's tags cannot be read.
 next_patch() {
-    local p
-    p=$(git -C "$ROOT" ls-remote --tags origin "refs/tags/v$X.$Y.*" "refs/tags/*/v$X.$Y.*" \
-        | sed -n "s|.*refs/tags/\([a-z0-9-]*/\)\{0,1\}v$X\.$Y\.\([0-9][0-9]*\)$|\2|p" | sort -n | tail -n 1)
+    local tags p
+    tags=$(git -C "$ROOT" ls-remote --tags origin "refs/tags/v$X.$Y.*" "refs/tags/*/v$X.$Y.*") \
+        || die "cannot read the release tags from origin (git ls-remote failed)"
+    p=$(sed -n "s|.*refs/tags/\([a-z0-9-]*/\)\{0,1\}v$X\.$Y\.\([0-9][0-9]*\)$|\2|p" <<< "$tags" | sort -n | tail -n 1)
     echo $((${p:--1} + 1))
 }
 
 if [[ -n $NEXT_PATCH ]]; then
-    echo "$X.$Y.$(next_patch)"
+    PATCH=$(next_patch)
+    echo "$X.$Y.$PATCH"
     exit 0
 fi
 
@@ -65,7 +68,8 @@ elif [[ -n $MR ]]; then
     echo "$NEXT~dev.0.mr$MR.${RUN:?--run is required with --mr}"
 elif [[ $BRANCH == release/* ]]; then
     [[ ${BRANCH#release/} == "$X.$Y" ]] || die "branch $BRANCH, but VERSION is $X.$Y"
-    echo "$X.$Y.$(next_patch)~rc.${RUN:?--run is required with --branch}"
+    PATCH=$(next_patch)
+    echo "$X.$Y.$PATCH~rc.${RUN:?--run is required with --branch}"
 elif [[ -n $RUN ]]; then
     echo "$NEXT~dev.$RUN"
 else

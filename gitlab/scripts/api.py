@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The GitLab API calls of the pipeline. Everything here is GitLab-specific; see docs/ci.md, "Releases".
 
-Usage: gitlab/api.py <command> [options]
+Usage: gitlab/scripts/api.py <command> [options]
 
   job-results --pipeline <id>         print {"<component>/<os>": "passed"|"failed"} for ci/dev-set.py
   newest-dev-set --out <dir>          extract the newest dev set (the newest successful "publish dev set" job on
@@ -15,7 +15,7 @@ Usage: gitlab/api.py <command> [options]
   publish-release --dir <dir>         upload a release set (ci/dev-set.py --complete) to the package registry
                                       and create the GitLab release for $CI_COMMIT_TAG
 
-Uses the CI variables CI_API_V4_URL, CI_PROJECT_ID, CI_PROJECT_PATH, CI_SERVER_HOST, CI_COMMIT_SHA, and
+Uses the CI variables CI_API_V4_URL, CI_PROJECT_ID, CI_PROJECT_PATH, CI_SERVER_URL, CI_SERVER_HOST, CI_COMMIT_SHA, and
 RELEASE_BOT_TOKEN (create-release, propose, tag-patch, backport) or CI_JOB_TOKEN (newest-dev-set, publish-release).
 job-results and newest-dev-set read the public pipeline API without a token.
 Never prints a token.
@@ -37,7 +37,7 @@ import zipfile
 
 API = os.environ.get("CI_API_V4_URL", "")
 PROJECT = os.environ.get("CI_PROJECT_ID", "")
-ROOT = pathlib.Path(__file__).resolve().parent.parent
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 # job-results: which jobs make up a component on one OS ({os}: ubuntu24 or ol10).
 COMPONENT_JOBS = {
@@ -54,7 +54,7 @@ COMPONENT_JOBS = {
 
 
 def die(message):
-    sys.exit(f"gitlab/api.py: {message}")
+    sys.exit(f"gitlab/scripts/api.py: {message}")
 
 
 def request(method, path, data=None, token=None, job_token=False, raw=None, ok_missing=False):
@@ -92,7 +92,10 @@ def quote(name):
 
 
 def run(*command, check=True):
-    return subprocess.run(command, check=check, cwd=ROOT, text=True, capture_output=True)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    if check and result.returncode != 0:
+        die(f"{' '.join(command)} failed (exit {result.returncode}): {result.stderr.strip()[-500:]}")
+    return result
 
 
 def version_line():
@@ -177,6 +180,8 @@ def create_release(_args):
             return
         die(f"{branch} already exists (at {existing['commit']['short_id']}). Patch releases are tagged from "
             f"{branch} itself; a new release line needs a new VERSION.")
+    if request("GET", f"/repository/tags/{quote(tag)}", token=token, ok_missing=True):
+        die(f"tag {tag} already exists")
     request("POST", f"/repository/branches?branch={quote(branch)}&ref={sha}", token=token)
     print(f"Created branch {branch} at {sha[:8]}")
     request("POST", "/repository/tags", {"tag_name": tag, "ref": sha, "message": f"Release {tag[1:]}"}, token=token)
@@ -239,7 +244,7 @@ def backport(_args):
     env = dict(os.environ, GIT_COMMITTER_NAME=user["name"], GIT_COMMITTER_EMAIL=user.get("email") or user.get(
         "commit_email") or f"{user['username']}@noreply.{os.environ['CI_SERVER_HOST']}")
     auth = "Authorization: Basic " + base64.b64encode(f"oauth2:{token}".encode()).decode()
-    url = f"https://{os.environ['CI_SERVER_HOST']}/{os.environ['CI_PROJECT_PATH']}.git"
+    url = f"{os.environ['CI_SERVER_URL']}/{os.environ['CI_PROJECT_PATH']}.git"
     parents = run("git", "rev-list", "--parents", "-n", "1", sha).stdout.split()[1:]
     failed = []
     for mr, x_y in targets:
