@@ -107,11 +107,14 @@ enum rte_ring_queue_behavior {
   RTE_RING_QUEUE_FIXED = 0, /* Enq/Deq a fixed number of items from a ring */
   RTE_RING_QUEUE_VARIABLE   /* Enq/Deq as many items as possible from ring */
 };
-/* structure to hold a pair of head/tail values and other metadata */
+/* structure to hold a pair of head/tail values and other metadata.
+ * head/tail follow the DPDK lock-free ring design: volatile forces fresh
+ * loads, while ordering is provided explicitly by rte_smp_*mb() barriers and
+ * the lock cmpxchg in rte_atomic32_cmpset() (S3687). */
 struct rte_ring_headtail {
-  volatile uint32_t head; /**< Prod/consumer head. */
-  volatile uint32_t tail; /**< Prod/consumer tail. */
-  uint32_t single;        /**< True if single prod/cons */
+  volatile uint32_t head; /**< Prod/consumer head. */  // NOSONAR
+  volatile uint32_t tail; /**< Prod/consumer tail. */  // NOSONAR
+  uint32_t single; /**< True if single prod/cons */
 };
 #define RTE_NAMESIZE 256
 /**
