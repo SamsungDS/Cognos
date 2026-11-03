@@ -73,7 +73,9 @@ def main() -> int:
 
     print("\nA naive datetime is the operator's wall clock, not UTC")
     _naive = parse_time_arg("2026-09-30T23:41:00")
-    _off = datetime.now().astimezone().utcoffset().total_seconds()
+    # The offset in force on that date, not today's: across a DST change the
+    # two differ by an hour (PDT on Sep 30, PST after Nov 1).
+    _off = datetime(2026, 9, 30, 23, 41).astimezone().utcoffset().total_seconds()
     _check("it is offset from the Z form by this machine's UTC offset",
            _naive - T0, -_off)
     _check("which is 0 only when the machine itself runs UTC",
