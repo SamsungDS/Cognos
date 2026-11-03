@@ -210,8 +210,13 @@ Until the component repositories stop, their `main` branches are brought into th
 of core, mgmt-fw, cxl, slat, ras, me (`svk-me`), node (`svk-node`), sapp and amo-prof (`amo_prof`) whose repository's
 `main` is not in this `main` yet, "sync components" merges it into the component's folder (a git subtree merge, so the
 history is kept) on `sync/<component>` and opens a merge request, or updates the open one. The merge request runs the
-normal pipeline for that component; you merge it. A component that does not merge cleanly (someone changed the same
-lines here) fails the job with its conflicting files and needs a merge request by hand; the others still sync.
+normal pipeline for that component; you merge it.
+
+The component repositories are the source of truth until they are retired. Where both sides changed the same lines,
+the repository's version wins; where one side deleted a file the other changed, the repository's side wins (the file
+stays if the repository has it, and goes if the repository deleted it). This repository's changes elsewhere are kept.
+The merge request lists every file where the repository's version replaced a change made here. A component that cannot
+be merged for another reason fails the job and needs a merge request by hand; the others still sync.
 `deploy/` is owned by this repository and is not synced; `cama` is a submodule.
 
 It runs only when `SYNC_COMPONENTS` is `true`, on `main`:
