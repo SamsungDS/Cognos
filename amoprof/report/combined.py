@@ -5037,8 +5037,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # Cache hit: use the same canonical cache-hit function as Interactive and End Report.
     # Primary semantics: cache-served prefill/prompt tokens over cache+compute
     # prefill/prompt tokens. Cached/prompt and gauge values remain diagnostics.
-    _tok_num = _safe_float(_pick(sglang, ["cache_hit_token_weighted_numerator_tokens"], 0.0), 0.0) or _ts_delta(sglang_ts, "cached_tokens_total")
-    _tok_den = _safe_float(_pick(sglang, ["cache_hit_token_weighted_denominator_tokens"], 0.0), 0.0) or _ts_delta(sglang_ts, "prompt_tokens_total")
+    # Raw-counter fallbacks read every label set (SGLang splits these by
+    # is_streaming); _ts_delta took the first column, which read 0.
+    _tok_num = _safe_float(_pick(sglang, ["cache_hit_token_weighted_numerator_tokens"], 0.0), 0.0) or (_kv_token_delta(raw_dir, ["cached_tokens_total"]) or 0.0)
+    _tok_den = _safe_float(_pick(sglang, ["cache_hit_token_weighted_denominator_tokens"], 0.0), 0.0) or (_kv_token_delta(raw_dir, ["prompt_tokens_total"]) or 0.0)
     cache_hit_token_weighted = _safe_float(_pick(sglang, ["cache_hit_token_weighted_pct", "cache_hit_cached_prompt_pct"], 0.0), 0.0) or _pct_from_ratio(_tok_num, _tok_den)
 
     _req_num = _safe_float(_pick(sglang, ["cache_hit_request_weighted_numerator_requests"], 0.0), 0.0) or (_ts_delta(sglang_ts, "request_cache_hit_total") or _ts_delta(sglang_ts, "cache_hit_request_total") or _ts_delta(sglang_ts, "request_cache_hits_total") or _ts_delta(sglang_ts, "cache_hit_requests_total"))
@@ -6753,8 +6755,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     if _kvg_cached <= 0:
         _kvg_cached = _kvg_counter_delta("prefill_cache")
-    _kvg_decode = _ts_delta(sglang_ts, "generation_tokens_total",
-                            "sglang_generation_tokens_total")
+    # Output tokens, every label set: SGLang splits generation_tokens_total by
+    # is_streaming, and reading the first column (is_streaming=false, flat)
+    # gave 0 here, so the tile fell back to realtime decode -- 49,566 against
+    # the End Report's 156,119.  None = not exported.
+    _kvg_decode_w = _kv_token_delta(raw_dir, ["generation_tokens_total"])
+    _kvg_decode = _kvg_decode_w or 0.0
 
     # Some deployments export realtime_tokens_total{mode=...} and NOT the
     # prompt_tokens_total / generation_tokens_total counters.  On one such run
@@ -6788,14 +6794,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f"({_pc:,.0f}) — neither prompt_tokens_total nor a cached "
                 f"total is exported here")
     _kvg_decode_src = ""
-    if _kvg_decode <= 0:
+    if _kvg_decode_w is None:
         _v_d = _kvg_counter_delta("decode")
         if _v_d > 0:
+            # Not output tokens: where both exist this counter read 49,681
+            # against 156,481 generated (= 8,774 first tokens + 147,637
+            # inter-token intervals), so it is a lower bound.
             _kvg_decode = _v_d
             _kvg_decode_src = (
                 f"decode from Δrealtime_tokens_total{{mode=decode}} "
                 f"({_v_d:,.0f}) — sglang_generation_tokens_total is not "
-                f"exported here")
+                f"exported here; this counter reads below the output token "
+                f"count, so decode is a lower bound")
     _kvg_recomp = max(0.0, _kvg_prompt - _kvg_cached)
     _kvg_new_tok = _kvg_recomp + _kvg_decode
     # What the run would have had to compute with no cache at all. The ratio
