@@ -343,18 +343,76 @@ class SyncTest(ApiTestCase):
         self.assertEqual(len(self.gitlab.sent("PUT", rf"{self.p}/merge_requests/7")), 1)
         self.assertEqual(self.mrs(), [])
 
-    def test_conflict_fails_that_component_only(self):
-        (self.work / "components/core/a.txt").write_text("changed here\n")
-        git(self.work, "commit", "--quiet", "-am", "monorepo change")
+    def commit_here(self, message):
+        git(self.work, "add", "-A")
+        git(self.work, "commit", "--quiet", "-m", message)
         git(self.work, "push", "--quiet", "origin", "main")
+
+    def test_conflict_takes_the_repository_version(self):
+        # The component repository is the source of truth: its side wins where both changed the same lines.
+        (self.work / "components/core/a.txt").write_text("changed here\n")
+        (self.work / "components/core/local.txt").write_text("only here\n")
+        self.commit_here("monorepo change")
         self.change_upstream(self.core, "changed there\n")
         self.change_upstream(self.ras, "ras 2\n")
         result = self.sync()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("core: does not merge cleanly", result.stderr)
-        self.assertIn("components/core/a.txt", result.stderr)
-        self.assertEqual([m["source_branch"] for m in self.mrs()], ["sync/ras"])
-        self.assertEqual(git(self.origin, "branch", "--list", "sync/core"), "")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(git(self.origin, "show", "sync/core:components/core/a.txt"), "changed there")
+        self.assertEqual(git(self.origin, "show", "sync/core:components/core/local.txt"), "only here")
+        self.assertIn("core: conflicts resolved in favour of dfs/svk/core: components/core/a.txt", result.stdout)
+        mrs = {m["source_branch"]: m for m in self.mrs()}
+        self.assertEqual(sorted(mrs), ["sync/core", "sync/ras"])
+        self.assertIn("Conflicts resolved in favour of `dfs/svk/core`", mrs["sync/core"]["description"])
+        self.assertIn("`components/core/a.txt`", mrs["sync/core"]["description"])
+        self.assertNotIn("Conflicts resolved", mrs["sync/ras"]["description"])
+
+    def test_only_conflicting_lines_take_the_repository_version(self):
+        lines = [f"line {i}\n" for i in range(1, 13)]
+        (self.core / "b.txt").write_text("".join(lines))
+        git(self.core, "add", "b.txt")
+        git(self.core, "commit", "--quiet", "-m", "b")
+        git(self.core, "push", "--quiet", "origin", "HEAD:main")
+        self.assertEqual(self.sync().returncode, 0)          # b.txt arrives through a normal sync
+        git(self.work, "fetch", "--quiet", "origin", "sync/core")
+        git(self.work, "merge", "--quiet", "--ff-only", "FETCH_HEAD")
+        here = list(lines)
+        here[0], here[11] = "line 1 here\n", "line 12 here\n"
+        (self.work / "components/core/b.txt").write_text("".join(here))
+        self.commit_here("monorepo edits lines 1 and 12")
+        there = list(lines)
+        there[0] = "line 1 there\n"
+        (self.core / "b.txt").write_text("".join(there))
+        git(self.core, "commit", "--quiet", "-am", "repository edits line 1")
+        git(self.core, "push", "--quiet", "origin", "HEAD:main")
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        merged = git(self.origin, "show", "sync/core:components/core/b.txt").splitlines()
+        self.assertEqual(merged[0], "line 1 there")    # conflicting line: the repository's
+        self.assertEqual(merged[11], "line 12 here")   # this repository's change elsewhere is kept
+
+    def test_file_changed_here_but_deleted_in_repository_is_deleted(self):
+        (self.work / "components/core/a.txt").write_text("changed here\n")
+        self.commit_here("monorepo change")
+        git(self.core, "rm", "--quiet", "a.txt")
+        (self.core / "c.txt").write_text("c\n")
+        git(self.core, "add", "c.txt")
+        git(self.core, "commit", "--quiet", "-m", "repository deletes a.txt")
+        git(self.core, "push", "--quiet", "origin", "HEAD:main")
+        result = self.sync(only="core")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        files = git(self.origin, "ls-tree", "-r", "--name-only", "sync/core", "components/core").split()
+        self.assertNotIn("components/core/a.txt", files)
+        self.assertIn("components/core/c.txt", files)
+
+    def test_file_deleted_here_but_changed_in_repository_comes_back(self):
+        # (The folder keeps another file, as a real component always does.)
+        (self.work / "components/core/local.txt").write_text("only here\n")
+        git(self.work, "rm", "--quiet", "components/core/a.txt")
+        self.commit_here("monorepo deletes a.txt")
+        self.change_upstream(self.core, "core 2\n")
+        result = self.sync(only="core")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(git(self.origin, "show", "sync/core:components/core/a.txt"), "core 2")
 
     def test_unreachable_repository_is_reported(self):
         result = self.sync(only="core,slat")

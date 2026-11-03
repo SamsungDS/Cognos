@@ -323,10 +323,52 @@ COMPONENT_REPOS = {
 }
 
 
+def unmerged_paths():
+    return run("git", "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
+
+
+def merge_preferring_repository(upstream, prefix, message, env):
+    """Merges upstream into prefix on the current branch. Returns (files that conflicted, error or None).
+
+    A clean merge keeps both sides. On conflicts, the merge is redone with the repository's side winning
+    (-Xtheirs); a file deleted on one side and changed on the other takes the repository's side too."""
+    def merge(*options):
+        return subprocess.run(["git", "merge", "--quiet", "--no-ff", f"-Xsubtree={prefix}", *options, "-m", message,
+                               upstream], cwd=ROOT, env=env, text=True, capture_output=True)
+
+    result = merge()
+    if result.returncode == 0:
+        return [], None
+    conflicts = unmerged_paths()
+    run("git", "merge", "--abort", check=False)
+    if not conflicts:
+        return [], f"cannot be merged: {result.stderr.strip()[-200:]}"
+    result = merge("-Xtheirs")
+    if result.returncode != 0:
+        for path in unmerged_paths():
+            # Stage 3 is the repository's side; without it, the repository deleted the file.
+            if run("git", "cat-file", "-e", f":3:{path}", check=False).returncode == 0:
+                run("git", "checkout", "--theirs", "--", path)
+                run("git", "add", "--", path)
+            else:
+                run("git", "rm", "--quiet", "--", path)
+        left = unmerged_paths()
+        committed = None if left else subprocess.run(["git", "commit", "--quiet", "--no-edit"], cwd=ROOT, env=env,
+                                                     text=True, capture_output=True)
+        if left or committed.returncode != 0:
+            run("git", "merge", "--abort", check=False)
+            return conflicts, f"cannot be merged even with its side winning: {', '.join(left) or committed.stderr[-200:]}"
+    return conflicts, None
+
+
 def sync(args):
     """For each component: if its repository's main is not yet in this main, merge it into the component's folder
     (git merge -Xsubtree, what `git subtree pull` does, history kept) on sync/<component>, and open or update that
-    merge request. A component that does not merge cleanly is reported and the others continue."""
+    merge request.
+
+    The component repository is the source of truth until it is retired: where both sides changed the same lines,
+    or one side deleted a file the other changed, the repository's side wins. The merge request lists those files.
+    A component that cannot be merged for any other reason is reported and the others continue."""
     token = bot_token()
     only = set(args.only.split(",")) if args.only else set(COMPONENT_REPOS)
     unknown = only - set(COMPONENT_REPOS)
@@ -357,14 +399,12 @@ def sync(args):
         run("git", "checkout", "--quiet", "--force", "-B", branch, base)
         # The trailers git subtree writes, so a later sync (or a person) can see what was merged.
         message = f"Sync {component} from {repo} main\n\ngit-subtree-dir: {prefix}\ngit-subtree-split: {upstream}\n"
-        merged = subprocess.run(["git", "merge", "--quiet", "--no-ff", f"-Xsubtree={prefix}", "-m", message, upstream],
-                                cwd=ROOT, env=env, text=True, capture_output=True)
-        if merged.returncode != 0:
-            conflicts = run("git", "diff", "--name-only", "--diff-filter=U", check=False).stdout.split()
-            run("git", "merge", "--abort", check=False)
-            failed.append(f"{component}: does not merge cleanly"
-                          + (f" (conflicts in {', '.join(conflicts)})" if conflicts else f": {merged.stderr.strip()[-200:]}"))
+        conflicts, error = merge_preferring_repository(upstream, prefix, message, env)
+        if error:
+            failed.append(f"{component}: {error}")
             continue
+        if conflicts:
+            print(f"{component}: conflicts resolved in favour of {repo}: {', '.join(conflicts)}")
         pushed = subprocess.run(["git", "-c", f"http.extraHeader={auth}", "push", "--quiet", "--force", url,
                                  f"HEAD:refs/heads/{branch}"], cwd=ROOT, text=True, capture_output=True)
         if pushed.returncode != 0:
@@ -374,6 +414,10 @@ def sync(args):
         description = (f"`{repo}` main (`{upstream[:8]}`) merged into `{prefix}` (git subtree merge, history kept). "
                        f"Made by the nightly sync; it is updated, not duplicated, by the next sync.\n\n"
                        f"New commits:\n{new_commits or '- (merge commits only)'}")
+        if conflicts:
+            description += (f"\n\n**Conflicts resolved in favour of `{repo}`** (the component repository is the "
+                            f"source of truth): in these files its version replaced this repository's changes where "
+                            f"both changed the same lines:\n" + "\n".join(f"- `{c}`" for c in conflicts))
         open_mrs = request("GET", f"/merge_requests?state=opened&source_branch={quote(branch)}", token=token) or []
         if open_mrs:
             mr = request("PUT", f"/merge_requests/{open_mrs[0]['iid']}", {"title": title, "description": description},
