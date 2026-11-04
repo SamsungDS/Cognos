@@ -12,7 +12,8 @@
 #   5. Dev set
 #   6. Releases
 #   7. Sync from the component repositories
-#   8. Other jobs: check version, amo-prof, ansible
+#   8. Deploy to the lab
+#   9. Other jobs: check version, amo-prof, ansible
 #
 # The pipeline that came with deploy/ (deploy/.gitlab-ci.yml) is deliberately
 # not included. Its deploy stage restores VM snapshots and deploys as root to
@@ -60,6 +61,7 @@ stages:
   - scan
   - publish
   - release
+  - deploy
 
 variables:
   # The lab runners lose DNS or network for a few seconds now and then; retry
@@ -645,7 +647,42 @@ sync components:
     - gitlab/scripts/api.py sync
 
 # ---------------------------------------------------------------------------
-# 8. Other jobs
+# 8. Deploy to the lab
+# ---------------------------------------------------------------------------
+# Run by hand on a main pipeline: deploys this pipeline's ubuntu24 packages
+# (completed from the newest dev set) with the playbooks to two lab machines,
+# checks that Cognos runs, then removes it and checks that nothing is left
+# (deploy/scripts/test-deploy.sh). The machines are only targets, not runners.
+# DEPLOY_SSH_KEY (root on both, base64) is a protected variable, so the job is
+# offered on main pipelines only. See docs/ci.md, "Deploy to the lab".
+
+deploy cognos:
+  stage: deploy
+  image: $CI_REGISTRY_IMAGE:ubuntu22-main
+  resource_group: lab-deploy
+  needs: !reference [.built and tested, needs]
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE =~ /^(push|web)$/
+      when: manual
+      allow_failure: true
+  variables:
+    DEPLOY_MANAGEMENT_SERVER: msl-ssg-vm22.msl.lab
+    DEPLOY_APPLICATION_SERVER: msl-ssg-srf06.msl.lab
+    ANSIBLE_FORCE_COLOR: "true"
+  before_script:
+    - !reference [.internal-ca, before_script]
+    - DEPLOY_KEY=$(mktemp)
+    - printf '%s' "$DEPLOY_SSH_KEY" | base64 -d > "$DEPLOY_KEY"
+    - chmod 600 "$DEPLOY_KEY"
+    - (cd deploy && ansible-galaxy collection install -r collections/requirements.yml)
+  script:
+    - deploy/scripts/fetch-packages.py --os ubuntu24 --pipeline "$CI_PIPELINE_ID"
+    - >-
+      deploy/scripts/test-deploy.sh --management "$DEPLOY_MANAGEMENT_SERVER"
+      --application "$DEPLOY_APPLICATION_SERVER" --key "$DEPLOY_KEY"
+
+# ---------------------------------------------------------------------------
+# 9. Other jobs
 # ---------------------------------------------------------------------------
 
 # Unit tests of the CI scripts (ci/, gitlab/scripts/, build.sh, deploy/scripts/)
