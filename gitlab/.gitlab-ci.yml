@@ -516,7 +516,7 @@ publish dev set:
     # cognos-grpc is not built here: the pinned version from Nexus goes into the ol10 set, so that deploying needs
     # nothing but GitLab. If Nexus does not answer, the set keeps the previous set's cognos-grpc.
     - 'ARTIFACTS_DIR=grpc deploy/scripts/fetch-packages.py --os ol10 --grpc || echo "WARNING: cognos-grpc not fetched"'
-    - GRPC_RPM=$(ls grpc/cognos-grpc-*.rpm 2> /dev/null | head -n 1)
+    - GRPC_RPM=$(ls grpc/cognos-grpc-*.rpm 2> /dev/null | head -n 1 || true)
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --results results.json
       --previous previous/dev-set ${GRPC_RPM:+--extra ol10=$GRPC_RPM} --out dev-set
