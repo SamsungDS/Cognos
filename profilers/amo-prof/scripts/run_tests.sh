@@ -16,10 +16,7 @@ export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$PWD"
 # Failing on main before 1.78.0 and unchanged by it; listed here so they are
 # visible, and deselected so they do not mask new failures. Remove an entry
 # once its test is fixed.
-KNOWN_FAILURES=(
-  "tests/test_kv_token_accounting.py::test_phase_analysis_shows_token_reuse_density"
-  "tests/test_executive_symbol_regression.py::test_ssd_bw_pct_initializer_before_first_use"
-)
+KNOWN_FAILURES=()
 
 fail=0
 pytest_files=()
@@ -30,8 +27,8 @@ done
 
 echo "== pytest: ${#pytest_files[@]} files + amoprof/tests (${#KNOWN_FAILURES[@]} known failures deselected)"
 deselect=()
-for k in "${KNOWN_FAILURES[@]}"; do deselect+=(--deselect "$k"); done
-"$PY" -m pytest -q "${pytest_files[@]}" amoprof/tests "${deselect[@]}" || fail=1
+for k in ${KNOWN_FAILURES[@]+"${KNOWN_FAILURES[@]}"}; do deselect+=(--deselect "$k"); done
+"$PY" -m pytest -q "${pytest_files[@]}" amoprof/tests ${deselect[@]+"${deselect[@]}"} || fail=1
 
 echo "== script tests: ${#script_files[@]} files"
 log=$(mktemp)

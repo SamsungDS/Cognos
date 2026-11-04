@@ -32,6 +32,10 @@ import json
 import re
 import logging
 from pathlib import Path
+try:
+    from amoprof.report.metric_kernels import gb_from_mib as _gb_from_mib
+except Exception:  # pragma: no cover - standalone/bundled execution
+    from metric_kernels import gb_from_mib as _gb_from_mib  # type: ignore
 
 log = logging.getLogger("amoprof.enhancer")
 
@@ -861,14 +865,22 @@ def _gpu_tooltip_stats_from_timeseries(raw_dir: Path, summary: dict) -> dict:
             except (TypeError, ValueError):
                 continue
 
+    # "Util mean" is the mean over every sample, as on the GPU util tiles; it
+    # used to average only samples > 0% and read 99.4% for a GPU idle 80% of
+    # the run.  The summary carries the tiles' own decomposition (restricted
+    # to the serving GPUs), so prefer it; the busy-only mean is reported
+    # separately and labelled.
     mean_source = "summary"
-    if active_vals:
-        util_mean = sum(active_vals) / len(active_vals)
-        util_peak = max(vals) if vals else max(active_vals)
-        mean_source = "active samples from gpu_timeseries.csv"
-    else:
+    util_mean = float(summary.get("gpu_util_overall_mean", 0) or 0)
+    busy_mean = float(summary.get("gpu_util_active_mean", 0) or 0)
+    if util_mean <= 0 and vals:
+        util_mean = sum(vals) / len(vals)
+        mean_source = "all samples from gpu_timeseries.csv"
+    if util_mean <= 0:
         util_mean = float(summary.get("gpu_util_mean", 0) or 0)
-        util_peak = float(summary.get("gpu_util_peak", 0) or 0)
+    if busy_mean <= 0 and active_vals:
+        busy_mean = sum(active_vals) / len(active_vals)
+    util_peak = (max(vals) if vals else 0.0) or float(summary.get("gpu_util_peak", 0) or 0)
 
     hbm_mean_mb = (sum(hbm_vals_mb) / len(hbm_vals_mb)) if hbm_vals_mb else float(summary.get("hbm_used_mb_mean", 0) or 0)
     hbm_total_mb = float(summary.get("hbm_total_mb_per_gpu", 0) or 0)
@@ -880,6 +892,7 @@ def _gpu_tooltip_stats_from_timeseries(raw_dir: Path, summary: dict) -> dict:
         "gpu_count": gpu_count,
         "raw_gpu_count": raw_gpu_count,
         "gpu_util_mean": util_mean,
+        "gpu_util_busy_mean": busy_mean,
         "gpu_util_peak": util_peak,
         "hbm_used_mb_mean": hbm_mean_mb,
         "hbm_total_mb_per_gpu": hbm_total_mb,
@@ -932,10 +945,12 @@ def _build_tooltip_data(raw_dir: Path) -> dict[str, str]:
         )
         tt["gpu utilisation"] = (
             f"{_gpu_label}<br>"
-            f"<b>Util</b> mean {gpu_tt.get('gpu_util_mean', 0):.1f}%, "
-            f"peak {gpu_tt.get('gpu_util_peak', 0):.1f}%<br>"
-            f"<b>HBM</b> {gpu_tt.get('hbm_used_mb_mean', 0)/1024:.1f} GB / "
-            f"{gpu_tt.get('hbm_total_mb_per_gpu', 0)/1024:.0f} GB "
+            f"<b>Util</b> mean {gpu_tt.get('gpu_util_mean', 0):.1f}%"
+            + (f" (busy {gpu_tt['gpu_util_busy_mean']:.1f}% when active)"
+               if gpu_tt.get('gpu_util_busy_mean', 0) > 0 else "")
+            + f", peak {gpu_tt.get('gpu_util_peak', 0):.1f}%<br>"
+            f"<b>HBM</b> {_gb_from_mib(gpu_tt.get('hbm_used_mb_mean', 0)):.1f} GB / "
+            f"{_gb_from_mib(gpu_tt.get('hbm_total_mb_per_gpu', 0)):.0f} GB "
             f"({gpu_tt.get('hbm_util_pct_mean', 0):.0f}%)<br>"
             f"<b>Power</b> peak {gpu_tt.get('power_w_peak', 0):.0f} W/GPU<br>"
             f"<span style='color:#94a3b8'>Source: {gpu_tt.get('source', 'summary')}</span>"
@@ -943,7 +958,7 @@ def _build_tooltip_data(raw_dir: Path) -> dict[str, str]:
         tt["hbm (gpu) bandwidth"] = (
             f"<b>HBM util</b> {gpu.get('hbm_util_pct_mean', 0):.0f}% · "
             f"DCGM active {gpu.get('dcgm_hbm_bw_active_pct', 0):.0f}%<br>"
-            f"<b>HBM used</b> {gpu.get('hbm_used_mb_mean', 0)/1024:.1f} GB mean"
+            f"<b>HBM used</b> {_gb_from_mib(gpu.get('hbm_used_mb_mean', 0)):.1f} GB mean"
         )
 
     smart = _read_json(raw_dir / "smart_summary.json")
@@ -1542,7 +1557,7 @@ def enhance_report(html_path: Path,
 
     html_path.write_text(html, encoding="utf-8")
     log.info("amoprof enhancer: wrote %s (%d KB, theme=%s)",
-             html_path, len(html) // 1024, theme)
+             html_path, len(html) // 1000, theme)
     return html_path
 
 
