@@ -435,7 +435,10 @@ test sapp:
   extends: [.test, .sapp]
   rules: [!reference [.test, rules], !reference [.sapp, rules]]
   needs: ["build sapp image"]
+  # No build-wrapper (Python and JavaScript), but the CA setup: on release
+  # branches ci/version.sh reads the release tags with git.
   before_script:
+    - !reference [.internal-ca, before_script]
     - !reference [.version, before_script]
   script:
     - ./build.sh --native --test sapp --os "$OS"
