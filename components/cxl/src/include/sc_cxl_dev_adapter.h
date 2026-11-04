@@ -3,6 +3,7 @@
 
 #include <error.h>
 
+#include <cerrno>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -96,6 +97,48 @@ class CXLDeviceAdapter {
    * @return Status code (0 for success, negative for error).
    */
   virtual int setup_info() = 0;
+
+  /**
+   * @brief Attaches device memory to the local host (optional).
+   *
+   * Adapters that manage host-attachable memory (e.g. CMM-MP memory pool
+   * nodes) override this to online the memory as a NUMA node or expose it as
+   * a devdax device. The default implementation reports the operation as
+   * unsupported, so existing adapters are unaffected.
+   *
+   * @param sid The device identifier.
+   * @param params Attach parameters (requested mode).
+   * @return 0 on success, negative POSIX error code on failure.
+   */
+  virtual int attach_memory(const sc_id& /* sid */,
+                            const AttachParams& /* params */) {
+    return -ENOTSUP;
+  }
+
+  /**
+   * @brief Detaches device memory from the local host (optional).
+   *
+   * @param sid The device identifier.
+   * @return 0 on success, negative POSIX error code on failure. The default
+   * implementation returns -ENOTSUP.
+   */
+  virtual int detach_memory(const sc_id& /* sid */) { return -ENOTSUP; }
+
+  /**
+   * @brief Performs a pool-level operation (optional).
+   *
+   * Used by pooled memory devices for host-initiated discovery, pool
+   * creation and hot add.
+   *
+   * @param op The pool operation.
+   * @param params Operation parameters.
+   * @return 0 on success, negative POSIX error code on failure. The default
+   * implementation returns -ENOTSUP.
+   */
+  virtual int pool_operation(PoolOp /* op */,
+                             const PoolOpParams& /* params */) {
+    return -ENOTSUP;
+  }
 
   /**
    * @brief Retrieve the list of hosts managed by this adapter.

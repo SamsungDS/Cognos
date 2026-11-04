@@ -16,8 +16,11 @@ install_packages() {
         g++
         git
         libboost-dev
+        libcxl-dev
+        libdaxctl-dev
         libfmt-dev
         libjansson-dev
+        libndctl-dev
         libnuma-dev
         libpci-dev
         libspdlog-dev

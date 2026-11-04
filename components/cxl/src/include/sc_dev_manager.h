@@ -103,6 +103,44 @@ class DeviceManager {
   // MetricsInfo get_device_metrics(uint64_t d_id);
 
   /**
+   * @brief Attaches the memory of a device to the local host.
+   *
+   * Resolves the owning adapter and invokes its attach_memory()
+   * implementation. Adapters that do not support the operation return
+   * -ENOTSUP.
+   *
+   * @param d_id Device ID.
+   * @param params Attach parameters (requested mode).
+   * @return 0 on success, -ENODEV if the device is unknown, or the negative
+   * POSIX error code returned by the adapter.
+   */
+  int attach_memory(uint64_t d_id, const AttachParams& params) const;
+
+  /**
+   * @brief Detaches the memory of a device from the local host.
+   *
+   * @param d_id Device ID.
+   * @return 0 on success, -ENODEV if the device is unknown, or the negative
+   * POSIX error code returned by the adapter.
+   */
+  int detach_memory(uint64_t d_id) const;
+
+  /**
+   * @brief Performs a pool-level operation on a named adapter.
+   *
+   * On success the adapter is asked to rediscover its devices, so that pool
+   * membership changes become visible.
+   *
+   * @param adapter_name Name the adapter was registered with.
+   * @param op The pool operation.
+   * @param params Operation parameters.
+   * @return 0 on success, -ENODEV if the adapter is unknown, or the negative
+   * POSIX error code returned by the adapter.
+   */
+  int pool_operation(const std::string& adapter_name, PoolOp op,
+                     const PoolOpParams& params);
+
+  /**
    * @brief Resolves a given device ID to its internal sc_id and associated
    * adapter.
    *

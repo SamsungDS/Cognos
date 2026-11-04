@@ -136,6 +136,50 @@ StatInfo DeviceManager::get_device_stats(uint64_t d_id) {
   return adapter->get_device_stats(scid);
 }
 
+/**
+ * @brief Attaches the memory of a device through its adapter.
+ */
+int DeviceManager::attach_memory(uint64_t d_id,
+                                 const AttachParams& params) const {
+  LOG(level_E::INFO, "Attaching memory for device ID: " + std::to_string(d_id));
+  auto result = resolve_adapter(d_id);
+  if (!result.has_value() || result->second == nullptr) {
+    return -ENODEV;
+  }
+  const auto& [scid, adapter] = result.value();
+  return adapter->attach_memory(scid, params);
+}
+
+/**
+ * @brief Detaches the memory of a device through its adapter.
+ */
+int DeviceManager::detach_memory(uint64_t d_id) const {
+  LOG(level_E::INFO, "Detaching memory for device ID: " + std::to_string(d_id));
+  auto result = resolve_adapter(d_id);
+  if (!result.has_value() || result->second == nullptr) {
+    return -ENODEV;
+  }
+  const auto& [scid, adapter] = result.value();
+  return adapter->detach_memory(scid);
+}
+
+/**
+ * @brief Performs a pool operation on a named adapter and rediscovers its
+ * devices on success.
+ */
+int DeviceManager::pool_operation(const std::string& adapter_name, PoolOp op,
+                                  const PoolOpParams& params) {
+  CXLDeviceAdapter* adapter = getAdapter(adapter_name);
+  if (!adapter) {
+    return -ENODEV;
+  }
+  int rc = adapter->pool_operation(op, params);
+  if (rc == 0) {
+    adapter->discover_devices(*this);
+  }
+  return rc;
+}
+
 void DeviceManager::register_device(const sc_id& sid,
                                     CXLDeviceAdapter* adapter) {
   uint64_t d_id = sid.get_sc_id();

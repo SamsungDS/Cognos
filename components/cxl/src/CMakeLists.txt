@@ -16,6 +16,7 @@ endif()
 # Create a library
 add_library(svkcxl ${SOURCES} ${HEADERS})
 add_subdirectory(cmmh)
+add_subdirectory(cmmmp)
 set(SVKCXL_INCLUDE_DEST "include/")
 
 find_library(JSON NAMES "libjansson.so" REQUIRED)
