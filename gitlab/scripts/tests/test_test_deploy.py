@@ -27,6 +27,8 @@ PLAYBOOK = r"""#!/bin/sh
 for a in "$@"; do case $a in playbooks/*) p=${a#playbooks/} ;; esac; done
 echo "playbook $p" >> "$FAKE/calls"
 [ -f hosts.test-deploy ] || { echo "no inventory" >&2; exit 9; }
+# ansible ignores ansible.cfg in a world-writable directory (a CI checkout): it must be given explicitly.
+[ "$ANSIBLE_CONFIG" = "$PWD/ansible.cfg" ] || { echo "ANSIBLE_CONFIG is not deploy/ansible.cfg" >&2; exit 8; }
 case $p in
   deploy_cognos.yml) exit ${FAKE_DEPLOY_RC:-0} ;;
   remove_cognos.yml) touch "$FAKE/removed" ;;
@@ -109,6 +111,22 @@ class TestDeployTest(TempDirTestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("there before, gone now (not an error)", result.stdout)
         self.assertIn("pkg cognos-core", result.stdout)
+
+    def test_ssh_login_sessions_are_not_leftovers(self):
+        # Every ssh connection gets a transient session-N.scope; they differ between before and after.
+        self.state(A, "before", "pkg base\nunit session-11.scope\nunit ssh.service\nuser root\n")
+        self.state(A, "removed", "pkg base\npkg python3-venv\nunit session-12.scope\nunit ssh.service\nuser root\n")
+        self.state(A, "purged", "pkg base\nunit run-r42.scope\nunit session-13.scope\nunit ssh.service\nuser root\n")
+        result, _ = self.run_test()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(f"{A}: nothing of the deployment is left", result.stdout)
+        self.assertNotIn("session-", result.stdout)
+
+    def test_a_real_unit_left_behind_still_fails(self):
+        self.state(A, "purged", "pkg base\nunit cognos-node.service\nuser root\n")
+        result, _ = self.run_test()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unit cognos-node.service", result.stdout)
 
     def test_mock_skips_the_cmmh_driver(self):
         result, calls = self.run_test("--mock")
