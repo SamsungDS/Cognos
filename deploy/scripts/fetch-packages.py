@@ -186,13 +186,24 @@ def merge(base, overlay):
 
 
 def grpc():
-    """cognos-grpc for ol10 from Nexus, at GRPC_VERSION. A short timeout: Nexus is only reachable from the lab."""
-    url = (f"{NEXUS}/service/rest/v1/search/assets?repository=svk_yum_ol10&name=cognos-grpc&version={GRPC_VERSION}")
-    items = json.loads(get(url, timeout=60))["items"]
-    rpm = next((a["downloadUrl"] for a in items if a["downloadUrl"].endswith(".rpm")), None)
+    """cognos-grpc for ol10 from Nexus, at GRPC_VERSION. A short timeout: Nexus is only reachable from the lab.
+
+    Found with Nexus' search by name, never from a fixed URL: Nexus records a yum version with its release
+    (1.59.2-1.el10), so the matching rpm is the one whose file name has GRPC_VERSION right after the name."""
+    base = f"{NEXUS}/service/rest/v1/search/assets?repository=svk_yum_ol10&name=cognos-grpc"
+    token, urls = None, []
+    while True:
+        page = json.loads(get(base + (f"&continuationToken={urllib.parse.quote(token)}" if token else ""), timeout=60))
+        urls += [a["downloadUrl"] for a in page.get("items", [])]
+        token = page.get("continuationToken")
+        if not token:
+            break
+    rpm = next((u for u in urls if u.rsplit("/", 1)[1].startswith(f"cognos-grpc-{GRPC_VERSION}-")
+                and u.endswith(".rpm")), None)
     if not rpm:
-        die(f"cognos-grpc {GRPC_VERSION} not found in Nexus (svk_yum_ol10)")
-    print(f"cognos-grpc {GRPC_VERSION} from Nexus")
+        found = ", ".join(u.rsplit("/", 1)[1] for u in urls) or "none"
+        die(f"cognos-grpc {GRPC_VERSION} not found in Nexus (svk_yum_ol10; found: {found})")
+    print(f"cognos-grpc {GRPC_VERSION} from Nexus: {rpm.rsplit('/', 1)[1]}")
     return {rpm.rsplit("/", 1)[1]: get(rpm, timeout=120)}
 
 

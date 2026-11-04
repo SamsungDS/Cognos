@@ -37,7 +37,8 @@ jobs.
 - amo-prof and `deploy/` run only when their own folder changes.
 - Anything else (docs, the `cama` submodule bump) builds nothing; only "check version" runs, and on `main` also
   "publish dev set", which then republishes the previous set unchanged.
-- Tag, schedule and web pipelines run every job. Images are still reused when their inputs are unchanged.
+- Tag, schedule and web pipelines run every job, except that tag pipelines skip "test amo-prof" and the ansible jobs
+  (neither is part of a release). Images are still reused when their inputs are unchanged.
 
 ## Stages and jobs
 
@@ -121,6 +122,7 @@ a build does and then runs the component's own unit-test command:
 | node | `scripts/build.sh --run-tests`, then `--run-python-tests` |
 | sapp | `scripts/run-tests.sh --ut`, then `npm run test:coverage` for the UI and rbac |
 
+A failed test job is retried once automatically (some component tests are flaky); a real failure fails twice.
 The C/C++ tests run under Sonar's build-wrapper. The junit and coverage reports appear in the merge request. slat runs
 on the `svk-slat` runner and me on the `svk-me` runner, as in their own repositories.
 

@@ -143,11 +143,32 @@ class FetchTest(TempDirTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not found", result.stderr)
 
-    def nexus(self):
-        rpm = f"{self.gitlab.url}/repository/svk_yum_ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm"
-        self.gitlab.route("GET", r"/service/rest/v1/search/assets\?repository=svk_yum_ol10&name=cognos-grpc&version=1\.59\.2",
-                          {"items": [{"downloadUrl": rpm}]})
-        self.gitlab.route("GET", r"/repository/svk_yum_ol10/cognos-grpc-1\.59\.2-1\.el10\.x86_64\.rpm", b"grpc")
+    def nexus(self, files=("cognos-grpc-1.50.0-1.el10.x86_64.rpm", "cognos-grpc-1.59.2-1.el10.x86_64.rpm")):
+        """A Nexus that, like the real one, records yum versions with their release (1.59.2-1.el10): a search with
+        version=1.59.2 finds nothing, a search by name finds the rpms, here on two pages."""
+        search = r"/service/rest/v1/search/assets\?repository=svk_yum_ol10&name=cognos-grpc"
+        assets = [{"downloadUrl": f"{self.gitlab.url}/repository/svk_yum_ol10/somewhere/{f}"} for f in files]
+        self.gitlab.route("GET", search + r"&version=.*", {"items": []})
+        self.gitlab.route("GET", search, {"items": assets[:1], "continuationToken": "page2"})
+        self.gitlab.route("GET", search + r"&continuationToken=page2", {"items": assets[1:]})
+        for f in files:
+            self.gitlab.route("GET", rf"/repository/svk_yum_ol10/somewhere/{re.escape(f)}", f.encode())
+
+    def test_grpc_is_found_by_name_and_pinned_version(self):
+        self.nexus()
+        result = self.fetch("--os", "ol10", "--grpc")
+        self.assertEqual(self.files(), ["cognos-grpc-1.59.2-1.el10.x86_64.rpm"])
+        self.assertEqual((self.dest / "cognos-grpc-1.59.2-1.el10.x86_64.rpm").read_bytes(),
+                         b"cognos-grpc-1.59.2-1.el10.x86_64.rpm")  # from the URL Nexus gave, on page 2
+        self.assertIn("cognos-grpc 1.59.2 from Nexus", result.stdout)
+        self.assertEqual(self.gitlab.sent("GET", r"/service/rest/.*&version=.*"), [])
+
+    def test_grpc_version_not_in_nexus_fails_and_says_what_is_there(self):
+        self.nexus(files=("cognos-grpc-1.50.0-1.el10.x86_64.rpm",))
+        result = self.fetch("--os", "ol10", "--grpc", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("cognos-grpc 1.59.2 not found in Nexus", result.stderr)
+        self.assertIn("found: cognos-grpc-1.50.0-1.el10.x86_64.rpm", result.stderr)
 
     def test_ol10_gets_grpc_from_the_set_not_nexus(self):
         self.pipelines((2, 20))
