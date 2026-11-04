@@ -126,8 +126,9 @@ def main() -> int:
     from amoprof.report.combined import build_executive_summary_html as _b
     tmp = pathlib.Path(tempfile.mkdtemp(prefix="amoprof_devbw_"))
     try:
-        _want_rd = PF_STEP / 60.0 * KV_KB / 1024      # MiB/s
-        _want_wr = BK_STEP / 60.0 * KV_KB / 1024
+        # Decimal MB/s, as the report prints: tokens/s x KiB x 1024 / 1e6.
+        _want_rd = PF_STEP / 60.0 * KV_KB * 1024 / 1e6
+        _want_wr = BK_STEP / 60.0 * KV_KB * 1024 / 1e6
         DEV = "L3 (local storage) read / write BW — device (measured)"
         LOG = "L3 (local storage) read / write BW — KV logical (token-derived)"
 

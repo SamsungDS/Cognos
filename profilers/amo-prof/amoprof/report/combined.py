@@ -408,10 +408,10 @@ def _parse_intel_pcm_memory_raw_summary(raw_dir: Path) -> Dict[str, Any]:
         if rd is None or wr is None:
             continue
         # pcm-memory unqualified System Read/Write/Memory are MB/s.
-        rd_g = rd / 1024.0; wr_g = wr / 1024.0
+        rd_g = rd / 1000.0; wr_g = wr / 1000.0   # pcm MB/s is decimal (1e6 B/s)
         if idx_mem is not None and len(r) > idx_mem:
             mm = _num(r[idx_mem])
-            total_g = (mm / 1024.0) if mm is not None else (rd_g + wr_g)
+            total_g = (mm / 1000.0) if mm is not None else (rd_g + wr_g)
         else:
             total_g = rd_g + wr_g
         if total_g > 0:
@@ -918,7 +918,7 @@ def _per_layer_takeaways_html(*,
             f"High HBM fill with sub-70% GPU utilization signals "
             f"<em>memory-bound</em> decoding — cycles spent waiting on HBM "
             f"bandwidth, not compute. Actionable levers: <strong>FP8 KV "
-            f"quantisation</strong> halves the KV footprint (327 → 163 KB/tok) "
+            f"quantisation</strong> halves the KV footprint ({_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f} → {_k_kb_from_bytes(kv_bytes_tok_kb * 512):.0f} KB/tok) "
             f"and effectively doubles in-HBM capacity; <strong>chunked prefill</strong> "
             f"reduces per-step HBM pressure during prefill."
             if gpu_verdict == "Memory-bound" else
@@ -951,7 +951,7 @@ def _per_layer_takeaways_html(*,
     )
 
     l3_data_note = (
-        f"(derived from SGLang × {kv_bytes_tok_kb:.0f} KB/tok)"
+        f"(derived from SGLang × {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f} KB/tok)"
         if l3_source == "sglang_logical_local_ssd"
         else "(blktrace / iostat)"
     )
@@ -1570,6 +1570,11 @@ try:
         window_counter_series as _k_window_counter_series,
         summarise_rank_rules as _k_summarise_rank_rules,
         token_reuse_density as _k_token_reuse_density,
+        gb_from_bytes as _k_gb_from_bytes, kb_from_bytes as _k_kb_from_bytes,
+        collector_gb as _k_collector_gb,
+        gb_from_mib as _k_gb_from_mib, gb_from_kib as _k_gb_from_kib,
+        gb_from_gib as _k_gb_from_gib,
+        mb_from_bytes as _k_mb_from_bytes, GIB_TO_GB as _K_GIB_TO_GB,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_hbm_breakdown as _k_resolve_hbm_breakdown,
         lagged_pearson as _k_lagged_pearson,
@@ -1598,6 +1603,11 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         window_counter_series as _k_window_counter_series,
         summarise_rank_rules as _k_summarise_rank_rules,
         token_reuse_density as _k_token_reuse_density,
+        gb_from_bytes as _k_gb_from_bytes, kb_from_bytes as _k_kb_from_bytes,
+        collector_gb as _k_collector_gb,
+        gb_from_mib as _k_gb_from_mib, gb_from_kib as _k_gb_from_kib,
+        gb_from_gib as _k_gb_from_gib,
+        mb_from_bytes as _k_mb_from_bytes, GIB_TO_GB as _K_GIB_TO_GB,
         resolve_gpu_hbm as _resolve_gpu_hbm,
         resolve_hbm_breakdown as _k_resolve_hbm_breakdown,
         lagged_pearson as _k_lagged_pearson,
@@ -2122,7 +2132,8 @@ def _amoprof_exec_svg_lba_heatmap(title: str, op: str, deciles: "list",
 
 def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
                                       values: "dict", colors: "dict",
-                                      width: int = 460, height: int = 300) -> str:
+                                      width: int = 460, height: int = 300,
+                                      n_label: str = "observations") -> str:
     """Grouped bar chart of whole-window p50 / p90 / p99 with printed values.
 
     A line chart of per-interval percentiles shows *movement* but makes the
@@ -2207,7 +2218,8 @@ def _amoprof_exec_svg_percentile_bars(title: str, subtitle: str, unit: str,
                      f'transform="rotate(-90 12 {pad_t+ph/2:.1f})" text-anchor="middle">{_html.escape(unit)}</text>')
     if values.get("observations"):
         parts.append(f'<text x="{pad_l+pw:.1f}" y="{height-10:.1f}" fill="#64748b" font-size="8" '
-                     f'text-anchor="end">n={_fmt_num(values["observations"], "", 0)} observations</text>')
+                     f'text-anchor="end">n={_fmt_num(values["observations"], "", 0)} '
+                     f'{_html.escape(n_label)}</text>')
     _cap = _amoprof_exec_chart_caption([("Y", title.split(" \u2014 ")[0], "#86efac")])
     return (f'<div class="corr-chart"><svg role="img" viewBox="0 0 {width} {height}" '
             f'preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block">'
@@ -2960,7 +2972,7 @@ def _amoprof_exec_svg_hbm_breakdown(b: dict, width: int = 460,
              f'<text x="{L}" y="29" fill="#94a3b8" font-size="8.5">'
              f'{_fmt_num(b.get("per_gpu_used_gb", 0), " GB", 1)} used of '
              f'{_fmt_num(total, " GB", 0)} \u00b7 TP {b.get("tp_size", 1):g} \u00b7 '
-             f'KV {_fmt_num(b.get("kv_bytes_per_token_kb", 0), " KB/token", 0)}</text>']
+             f'KV {_fmt_num(_k_kb_from_bytes(_safe_float(b.get("kv_bytes_per_token_kb", 0), 0.0) * 1024), " KB/token", 0)}</text>']
     bx = L + pw * 0.28
     bw = pw * 0.44
     y = T
@@ -3570,8 +3582,8 @@ def _amoprof_build_l3_ssd_exec_visual_analysis_html(
     qd_src = str((qd_sum or {}).get("qd_source", "") if isinstance(qd_sum, dict) else "")
     qd_exact = qd_src.startswith("blktrace")
     physical_metrics = bool(has_blktrace or nvme_rd_lat > 0 or nvme_wr_lat > 0 or qd_mean > 0)
-    projected_tb_day = (float(write_gb or 0.0) / duration_s * 86400.0 / 1024.0) if write_gb > 0 else 0.0
-    cap_tb = max(float(l3_fs_total_gb or 0.0) / 1024.0, 0.0)
+    projected_tb_day = (float(write_gb or 0.0) / duration_s * 86400.0 / 1000.0) if write_gb > 0 else 0.0
+    cap_tb = max(float(l3_fs_total_gb or 0.0) / 1000.0, 0.0)
     if cap_tb <= 0:
         cap_tb = 4.0
     req_dwpd = projected_tb_day / cap_tb if cap_tb > 0 else 0.0
@@ -3590,8 +3602,8 @@ def _amoprof_build_l3_ssd_exec_visual_analysis_html(
         dominant_dimension = "No proven L3 saturation"
         dim_badge = _amoprof_html_badge("not proven", "info")
 
-    read_req_gbs = max(read_bw / 1024.0 * 2.0, 0.0)
-    write_req_gbs = max(write_bw / 1024.0 * 2.0, 0.0)
+    read_req_gbs = max(read_bw / 1000.0 * 2.0, 0.0)
+    write_req_gbs = max(write_bw / 1000.0 * 2.0, 0.0)
     endurance_status = "bad" if req_dwpd >= 5 else "warn" if req_dwpd >= 1 else "ok"
     telemetry_status = "ok" if physical_metrics else "warn"
     workload_class = "Active L3 cache" if (read_gb > 0 and write_gb > 0) else ("L3 write/offload" if write_gb > 0 else "L3 not proven")
@@ -3615,7 +3627,7 @@ def _amoprof_build_l3_ssd_exec_visual_analysis_html(
         "Bandwidth demand mapped to token activity",
         ["Evict", "Backup→write", "Prefetch→read", "Load-back diag"],
         [
-            {"name": "Logical GB", "values": [0.0, write_gb, read_gb, loadback_tokens * kv_bytes_tok_kb / (1024 * 1024)], "color": "#f59e0b"},
+            {"name": "Logical GB", "values": [0.0, write_gb, read_gb, _k_gb_from_bytes(loadback_tokens * kv_bytes_tok_kb * 1024)], "color": "#f59e0b"},
             {"name": "Avg BW MB/s", "values": [0.0, write_bw, read_bw, 0.0], "color": "#38bdf8"},
         ],
         [{"name": "Token rate /s", "values": [evict_rate, backup_rate, prefetch_rate, loadback_rate], "color": "#a78bfa"}],
@@ -3667,7 +3679,7 @@ def _amoprof_build_l3_ssd_exec_visual_analysis_html(
     endurance_chart = _amoprof_exec_svg_combo(
         "Endurance projection mapped to backup pressure",
         ["Observed", "8h/day", "24h/day", "DWPD"],
-        [{"name": "Writes TB/day", "values": [write_gb / 1024.0, projected_tb_day / 3.0, projected_tb_day, req_dwpd], "color": "#22c55e"}],
+        [{"name": "Writes TB/day", "values": [write_gb / 1000.0, projected_tb_day / 3.0, projected_tb_day, req_dwpd], "color": "#22c55e"}],
         [{"name": "Backup tok/s", "values": [backup_rate, backup_rate, backup_rate, backup_rate], "color": "#fb923c"}],
         "TB/day / DWPD", "Backup token pressure")
 
@@ -4223,7 +4235,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # workload behavior.
     _ba_coverage_warning = _ba_sum.get("coverage_warning", "") or _ba_sum.get(
         "blktrace_collector_warning", "")
-    _ba_kernel_wr_gb     = _safe_float(_ba_sum.get("kernel_wr_gb_delta", 0))
+    _ba_kernel_wr_gb     = _k_collector_gb(   # copied from blktrace wr_delta_gb (GiB)
+        "wr_delta_gb", _safe_float(_ba_sum.get("kernel_wr_gb_delta", 0)))
     _ba_captured_ratio   = _safe_float(_ba_sum.get("captured_vs_kernel_ratio", 0))
     _ba_dropped_events   = _safe_float(_ba_sum.get("blktrace_dropped_events", 0))
 
@@ -4427,12 +4440,19 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # filesystems or NVMe devices on the node.
     _launch_raw_for_l3 = _pick(setup, ["Launch command","launch_command","Command","Reference launch command"], "")
     l3_explicit_config = _amoprof_has_explicit_l3_config(setup, str(_launch_raw_for_l3))
-    l3_fs_total_gb = _safe_float(smart.get("hicache_fs_total_gb", 0)) if l3_explicit_config else 0.0
-    l3_fs_used_gb  = (_safe_float(smart.get("hicache_fs_used_gb",
-                                  smart.get("hicache_size_gb", 0))) if l3_explicit_config else 0.0)
-    l3_fs_avail_gb = _safe_float(smart.get("hicache_fs_avail_gb", 0)) if l3_explicit_config else 0.0
+    # The keyword scan above also matches a monitored device ("L3 device:
+    # /dev/nvme0n1") and defaulted fields; SGLang saying it has no storage
+    # backend outranks both.
+    _l3_no_tier = resolve_l3_backend(setup, str(_launch_raw_for_l3))
+    _l3_no_tier = _l3_no_tier if _l3_no_tier.backend_class == "host_dram_only" else None
+    if _l3_no_tier is not None:
+        l3_explicit_config = False
+    l3_fs_total_gb = _k_collector_gb("hicache_fs_total_gb", _safe_float(smart.get("hicache_fs_total_gb", 0))) if l3_explicit_config else 0.0
+    l3_fs_used_gb  = (_k_collector_gb("hicache_fs_used_gb", _safe_float(smart.get("hicache_fs_used_gb",
+                                  smart.get("hicache_size_gb", 0)))) if l3_explicit_config else 0.0)
+    l3_fs_avail_gb = _k_collector_gb("hicache_fs_avail_gb", _safe_float(smart.get("hicache_fs_avail_gb", 0))) if l3_explicit_config else 0.0
     l3_fs_used_pct = _safe_float(smart.get("hicache_fs_used_pct", 0)) if l3_explicit_config else 0.0
-    nvme_dev_cap_gb = _safe_float(smart.get("nvme_device_capacity_gb", 0)) if l3_explicit_config else 0.0
+    nvme_dev_cap_gb = _k_collector_gb("nvme_device_capacity_gb", _safe_float(smart.get("nvme_device_capacity_gb", 0))) if l3_explicit_config else 0.0
     l3_capacity_source = "df/SMART runtime snapshot" if (l3_explicit_config and l3_fs_total_gb > 0) else ""
     # Which instant the df snapshot describes.  A point-in-time gauge without
     # its instant is unreadable as evidence: the same window analysed twice
@@ -4696,16 +4716,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # DRAM (host) capacity for the L2 tier label. Sourced from dram_summary.json
     # written by DramMonitor (/proc/meminfo MemTotal). May be 0 on legacy runs.
     _dram_sum = _read_json(raw_dir / "dram_summary.json")
-    host_dram_total_gb = _safe_float(_dram_sum.get("dram_total_gb", 0))
+    host_dram_total_gb = _k_collector_gb("dram_total_gb", _safe_float(_dram_sum.get("dram_total_gb", 0)))
     if host_dram_total_gb <= 0:
         host_dram_total_gb = _safe_float(_pick(setup, [
             "Host DRAM GB", "DRAM capacity GB", "DRAM total GB",
             "host_dram_gb", "dram_total_gb"
         ], 0))
-    host_dram_used_gb = _safe_float(_dram_sum.get("dram_used_gb_mean",
-                                      _dram_sum.get("dram_used_gb_peak", 0)))
+    # dram_used_gb_* are /proc/meminfo KiB / 1024 / 1024 (GiB), like used_gb.
+    host_dram_used_gb = _k_gb_from_gib(_safe_float(_dram_sum.get("dram_used_gb_mean",
+                                      _dram_sum.get("dram_used_gb_peak", 0))))
     # Peak kept separate so the KPI tile can show mean and peak side-by-side.
-    host_dram_used_peak_gb = _safe_float(_dram_sum.get("dram_used_gb_peak", 0))
+    host_dram_used_peak_gb = _k_gb_from_gib(_safe_float(_dram_sum.get("dram_used_gb_peak", 0)))
     host_dram_util_pct_peak = _safe_float(_dram_sum.get("dram_util_pct_peak", 0))
     # Fallback: dram_summary.json can be missing dram_used_gb_mean / peak
     # on some runs (older writer, aborted stop()).  When the timeseries CSV
@@ -4717,8 +4738,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _dts_path = _first_existing(raw_dir, ["dram_timeseries.csv"])
             if _dts_path:
                 _dts = _amoprof_read_columns_raw(_dts_path, ["used_gb", "total_gb"])
-                _u = [v for v in (_dts.get("used_gb") or []) if v == v and v > 0]
-                _t = [v for v in (_dts.get("total_gb") or []) if v == v and v > 0]
+                _u = [_k_collector_gb("used_gb", v) for v in (_dts.get("used_gb") or []) if v == v and v > 0]
+                _t = [_k_collector_gb("total_gb", v) for v in (_dts.get("total_gb") or []) if v == v and v > 0]
                 if _u:
                     if host_dram_used_gb <= 0:
                         host_dram_used_gb = sum(_u) / len(_u)
@@ -5190,23 +5211,33 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _gpu_idle_fraction = _gpu_dec["idle_fraction_pct"]
     if _gpu_dec["peak"] > gpu_peak:
         gpu_peak = _gpu_dec["peak"]
-    hbm_gb     = _safe_float(_pick(gpu, ["hbm_used_gb_mean","hbm_gb","mem_used_gb_mean",
-                                          "hbm_used_mb_mean"], 0.0))
+    hbm_gb     = _safe_float(_pick(gpu, ["hbm_used_gb_mean","hbm_gb","mem_used_gb_mean"], 0.0))
     if hbm_gb > 1000:
-        hbm_gb /= 1024.0   # MB → GB
+        hbm_gb = _k_gb_from_mib(hbm_gb)   # nvidia-smi MiB under a GB name
+    if hbm_gb <= 0:
+        hbm_gb = _k_gb_from_mib(_safe_float(_pick(gpu, ["hbm_used_mb_mean"], 0.0)))
     hbm_pct    = _safe_float(_pick(gpu, ["hbm_util_pct_mean","hbm_pct","mem_util_pct_mean"], 0.0))
-    # Per-device HBM capacity should come from setup_details when provided,
-    # because DCGM may report a physical-board/default value that does not
-    # match the intended setup.  The aggregate HBM capacity should be based on
-    # the active inference parallelism (TP × DP), not necessarily all GPUs in
-    # the host.  Example: TP=4 with 80 GB/GPU => 320 GB active HBM.
+    # Per-device HBM capacity: the measured DCGM / nvidia-smi total (MiB) is
+    # the denominator for the measured used value, so both are decimal GB.
+    # The setup_details figure is a nominal board size ("40 GB" on an A100 is
+    # 40 GiB) and is only a fallback, converted from GiB.  The aggregate HBM
+    # capacity is based on the active inference parallelism (TP × DP), not
+    # necessarily all GPUs in the host.
     hbm_total_setup = _safe_float(_pick(setup, [
         "GPU Memory per Device GB", "GPU memory per device GB",
         "HBM per GPU GB", "hbm_per_gpu_gb", "gpu_memory_per_device_gb"
     ], 0.0))
-    hbm_total  = hbm_total_setup if hbm_total_setup > 0 else _safe_float(_pick(gpu, ["hbm_total_gb","hbm_total_mb_per_gpu"], 40.0))
-    if hbm_total > 1000:
-        hbm_total /= 1024.0
+    _hbm_total_meas = _safe_float(_pick(gpu, ["hbm_total_gb"], 0.0))
+    if _hbm_total_meas > 1000:
+        _hbm_total_meas = _k_gb_from_mib(_hbm_total_meas)   # MiB under a GB name
+    if _hbm_total_meas <= 0:
+        _hbm_total_meas = _k_gb_from_mib(_safe_float(_pick(gpu, ["hbm_total_mb_per_gpu"], 0.0)))
+    if _hbm_total_meas > 0:
+        hbm_total = _hbm_total_meas
+    elif hbm_total_setup > 0:
+        hbm_total = _k_gb_from_gib(hbm_total_setup)
+    else:
+        hbm_total = _k_gb_from_gib(40.0)
 
     # Defensive HBM-total promotion: if per-GPU used exceeds per-GPU total
     # (measurement can't physically exceed capacity), the total was populated
@@ -5214,11 +5245,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # while FB_USED clearly belongs to a larger accelerator (80/96/141/192 GB).
     # Mirror amoprof.py's Metrics-side fix so the Executive tile never shows
     # > 100% HBM used, and record the promotion for the tile sub-note.
-    hbm_total_source = "setup" if hbm_total_setup > 0 else "dcgm_fb_total"
+    hbm_total_source = ("dcgm_fb_total" if _hbm_total_meas > 0 else
+                        "setup" if hbm_total_setup > 0 else "default_40gib")
     hbm_total_inferred = False
     try:
         if hbm_gb > 0 and hbm_total > 0 and hbm_gb > hbm_total * 1.05:
-            for _cap_gb in (48.0, 80.0, 96.0, 120.0, 141.0, 192.0):
+            for _cap_nom in (48.0, 80.0, 96.0, 120.0, 141.0, 192.0):
+                _cap_gb = _k_gb_from_gib(_cap_nom)   # nominal board sizes are GiB
                 if hbm_gb <= _cap_gb * 1.05:
                     hbm_total = _cap_gb
                     hbm_total_inferred = True
@@ -5283,8 +5316,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if _safe_float(_gpu_cfg.get("gpus_in_use", 0)) > 0 and tp_count <= 0:
         active_gpu_count = _safe_float(_gpu_cfg["gpus_in_use"])
     # Per-GPU HBM capacity: nvidia-smi memory.total beats any inferred value.
-    if _safe_float(_gpu_cfg.get("hbm_per_gpu_gb", 0)) > 0:
-        hbm_total = _safe_float(_gpu_cfg["hbm_per_gpu_gb"])
+    # gpu_config.json stores memory_total_mib and hbm_per_gpu_gb = MiB / 1024
+    # (GiB); convert from the MiB figure when present.
+    _cfg_mib = max((_safe_float((g or {}).get("memory_total_mib", 0))
+                    for g in (_gpu_cfg.get("gpus") or []) if isinstance(g, dict)),
+                   default=0.0)
+    if _cfg_mib > 0:
+        hbm_total = _k_gb_from_mib(_cfg_mib)
+    elif _safe_float(_gpu_cfg.get("hbm_per_gpu_gb", 0)) > 0:
+        hbm_total = _k_gb_from_gib(_safe_float(_gpu_cfg["hbm_per_gpu_gb"]))
 
     hbm_used_total_gb = hbm_gb * active_gpu_count if hbm_gb > 0 else 0.0
     hbm_total_all_gpus_gb = hbm_total * active_gpu_count if hbm_total > 0 else 0.0
@@ -5314,10 +5354,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # NVMe / L3 storage
     read_gb   = _safe_float(_pick(blk, ["nvme_read_total_gb","read_gb_total","read_GB_total"], 0.0))
     if read_gb == 0.0:
-        read_gb = _safe_float(_pick(blk, ["read_bytes_total"], 0.0)) / (1024**3)
+        read_gb = _k_gb_from_bytes(_safe_float(_pick(blk, ["read_bytes_total"], 0.0)))
     write_gb  = _safe_float(_pick(blk, ["nvme_write_total_gb","write_gb_total","write_GB_total"], 0.0))
     if write_gb == 0.0:
-        write_gb = _safe_float(_pick(blk, ["write_bytes_total"], 0.0)) / (1024**3)
+        write_gb = _k_gb_from_bytes(_safe_float(_pick(blk, ["write_bytes_total"], 0.0)))
 
     # Byte totals integrated from the device bandwidth series when no summed
     # byte counter exists.
@@ -5352,7 +5392,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                         _st = nvme_ts.get(_col) or {}
                         _mean = _safe_float(_st.get("mean", 0))
                         if _mean > 0:
-                            _gb = _mean * _bw_span / 1024.0
+                            _gb = _mean * _bw_span / 1000.0   # MB/s x s -> decimal GB
                             if _which == "r":
                                 read_gb = _gb
                             else:
@@ -5379,7 +5419,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         for col in ("rd_bw_mbs","read_bw_mbs","rkB_s"):
             if col in nvme_ts and nvme_ts[col].get("mean",0) > 0:
                 nvme_rd_bw = _safe_float(nvme_ts[col]["mean"])
-                if col == "rkB_s": nvme_rd_bw /= 1024.0
+                if col == "rkB_s": nvme_rd_bw = nvme_rd_bw * 1024 / 1e6   # iostat KiB/s -> MB/s
                 nvme_rd_bw_src = f"{col} · nvme_driver_timeseries.csv"
                 break
 
@@ -5391,7 +5431,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         for col in ("wr_bw_mbs","write_bw_mbs","wkB_s"):
             if col in nvme_ts and nvme_ts[col].get("mean",0) > 0:
                 nvme_wr_bw = _safe_float(nvme_ts[col]["mean"])
-                if col == "wkB_s": nvme_wr_bw /= 1024.0
+                if col == "wkB_s": nvme_wr_bw = nvme_wr_bw * 1024 / 1e6   # iostat KiB/s -> MB/s
                 nvme_wr_bw_src = f"{col} · nvme_driver_timeseries.csv"
                 break
 
@@ -5925,7 +5965,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         kv_bytes_tok_kb = 327.0
         _kv_resolution.update({"kb": 327.0, "exact": False, "formula": "",
 
-                               "source": "UNRESOLVED — nominal 327 KB/token assumed; "
+                               "source": "UNRESOLVED — nominal 335 KB/token (327 × 1024 bytes) assumed; "
                                          "model not recognised and engine config not exposed"})
 
 
@@ -5942,11 +5982,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if _kv_pool_tok <= 0:
             _kv_pool_tok = _safe_float(_pick(setup, ["max_total_num_tokens"], 0), 0)
         if _hc_ratio > 0 and _kv_pool_tok > 0 and kv_bytes_tok_kb > 0:
-            hicache_total_gb = (_kv_pool_tok * _hc_ratio
-                                * kv_bytes_tok_kb / 1024.0 / 1024.0)
+            hicache_total_gb = _k_gb_from_bytes(_kv_pool_tok * _hc_ratio
+                                * kv_bytes_tok_kb * 1024.0)
             l2_dram_capacity_via_ratio = (
                 f"--hicache-ratio {_hc_ratio:g} x max_total_num_tokens "
-                f"{_kv_pool_tok:,.0f} x KV {kv_bytes_tok_kb:.0f} KB/token")
+                f"{_kv_pool_tok:,.0f} x KV {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f} KB/token")
         else:
             l2_dram_capacity_via_ratio = ""
     else:
@@ -6032,10 +6072,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # full-model estimate only when it fits the configured allocation;
             # otherwise use the TP-sharded per-rank estimate.
             _tp_for_kv = max(_safe_float(tp_size, 1.0), 1.0)
-            _full_gb = _l2_used_tokens * kv_bytes_tok_kb / (1024 * 1024)
-            _tp_gb = _l2_used_tokens * (kv_bytes_tok_kb / _tp_for_kv) / (1024 * 1024)
-            _peak_full_gb = _l2_used_tokens_max * kv_bytes_tok_kb / (1024 * 1024)
-            _peak_tp_gb = _l2_used_tokens_max * (kv_bytes_tok_kb / _tp_for_kv) / (1024 * 1024)
+            _full_gb = _k_gb_from_bytes(_l2_used_tokens * kv_bytes_tok_kb * 1024)
+            _tp_gb = _k_gb_from_bytes(_l2_used_tokens * (kv_bytes_tok_kb / _tp_for_kv) * 1024)
+            _peak_full_gb = _k_gb_from_bytes(_l2_used_tokens_max * kv_bytes_tok_kb * 1024)
+            _peak_tp_gb = _k_gb_from_bytes(_l2_used_tokens_max * (kv_bytes_tok_kb / _tp_for_kv) * 1024)
             # Prefer full-model unless it does not fit configured HiCache
             # allocation, in which case TP-sharded per-rank is likely the
             # right reading of the counter.  This keeps the tile aligned
@@ -6218,7 +6258,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     prefetched_tokens = _pf or 0.0
     evicted_tokens    = _ev or 0.0
 
-    # Convert to GB: tokens × KB/token / (1024 KB/MB × 1024 MB/GB) = GB.
+    # Convert to decimal GB: tokens × (kv_bytes_tok_kb × 1024) bytes/token / 1e9.
     # Reliable SGLang L3/local Storage evidence:
     #   backuped_tokens   -> data moved down into the L3 (local storage) tier (write/offload)
     #   prefetched_tokens -> explicit prefetch/onboard from the L3/backing tier
@@ -6240,9 +6280,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if v is None:
             return "absent"
         return f"{v/1e6:,.2f}M tokens" if v >= 1e6 else f"{v:,.0f} tokens"
-    l3_est_write_gb = backuped_tokens * kv_bytes_tok_kb / (1024 * 1024)
-    l3_est_read_gb  = prefetched_tokens * kv_bytes_tok_kb / (1024 * 1024) if l3_reliable_sglang_logical_local_ssd > 0 else 0.0
-    l3_ambiguous_loadback_gb = loadback_tokens * kv_bytes_tok_kb / (1024 * 1024) if loadback_tokens > 0 else 0.0
+    l3_est_write_gb = _k_gb_from_bytes(backuped_tokens * kv_bytes_tok_kb * 1024)
+    l3_est_read_gb  = _k_gb_from_bytes(prefetched_tokens * kv_bytes_tok_kb * 1024) if l3_reliable_sglang_logical_local_ssd > 0 else 0.0
+    l3_ambiguous_loadback_gb = _k_gb_from_bytes(loadback_tokens * kv_bytes_tok_kb * 1024) if loadback_tokens > 0 else 0.0
     l3_sglang_activity_tokens = l3_reliable_sglang_logical_local_ssd
     # Derive L3.5 when SGLang proves backing-tier movement but setup does not
     # resolve a local SSD/NVMe/file-backed mapping.  Explicit setup still wins;
@@ -6399,7 +6439,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     if (_blktrace_was_attempted and block_total_source.startswith("blktrace")
             and _l3_window_s > 0 and (nvme_rd_bw_measured or nvme_wr_bw_measured)):
         _dev_gb = ((nvme_rd_bw if nvme_rd_bw_measured else 0.0)
-                   + (nvme_wr_bw if nvme_wr_bw_measured else 0.0)) * _l3_window_s / 1024.0
+                   + (nvme_wr_bw if nvme_wr_bw_measured else 0.0)) * _l3_window_s / 1000.0
         _bt_gb = ((_block_read_gb if nvme_rd_bw_measured else 0.0)
                   + (_block_write_gb if nvme_wr_bw_measured else 0.0))
         if _dev_gb > 1.0:
@@ -6415,13 +6455,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f"counters. Trace the block device that carries the I/O — on NVMe "
                 f"native multipath, compare the head (nvmeXnY) and the controller "
                 f"path (nvmeXcYnZ) in /proc/diskstats.")
-            _ba_kernel_wr_gb = (nvme_wr_bw * _l3_window_s / 1024.0) if nvme_wr_bw_measured else 0.0
+            _ba_kernel_wr_gb = (nvme_wr_bw * _l3_window_s / 1000.0) if nvme_wr_bw_measured else 0.0
             _ba_captured_ratio = blktrace_coverage
         if str((_qd_sum or {}).get("qd_source", "blktrace_q_to_c")).startswith("blktrace"):
             _qd_sum = _qd_device_fallback()
 
-    l3_logical_rd_bw_mbs = (l3_est_read_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_read_gb > 0) else 0.0
-    l3_logical_wr_bw_mbs = (l3_est_write_gb * 1024 / _l3_window_s) if (_l3_window_s > 0 and l3_est_write_gb > 0) else 0.0
+    l3_logical_rd_bw_mbs = (l3_est_read_gb * 1000 / _l3_window_s) if (_l3_window_s > 0 and l3_est_read_gb > 0) else 0.0
+    l3_logical_wr_bw_mbs = (l3_est_write_gb * 1000 / _l3_window_s) if (_l3_window_s > 0 and l3_est_write_gb > 0) else 0.0
 
     def _dev_bw_txt(_rd_fmt: str = ".1f", _wr_fmt: str = ".1f") -> str:
         """Device R/W bandwidth for prose, saying which direction was unmeasured."""
@@ -6495,10 +6535,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         """KV traffic implied by the engine's token counters, labelled as derived."""
         if not (l3_est_read_gb > 0 or l3_est_write_gb > 0) or _l3_window_s <= 0:
             return ""
-        _gb = lambda v: (f"{v*1024:.1f} MB" if 0 < v < 1 else _fmt_num(v, " GB", 1))
+        _gb = lambda v: (f"{v*1000:.1f} MB" if 0 < v < 1 else _fmt_num(v, " GB", 1))
         _frags = [f"{_gb(l3_est_read_gb)} prefetched / {_gb(l3_est_write_gb)} backed up "
                   f"over {_l3_window_s/60:,.1f} min",
-                  f"KV {kv_bytes_tok_kb:,.0f} KB/token"]
+                  f"KV {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):,.0f} KB/token"]
         _seen = []
         if nvme_rd_bw_measured and l3_logical_rd_bw_mbs > 0 and not has_l35:
             _seen.append(f"device read {nvme_rd_bw / l3_logical_rd_bw_mbs * 100:.1f}%")
@@ -6523,12 +6563,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                         "the page already existed, never reach a drive."))
 
     # Spill threshold = free HBM / KV bytes per token
-    spill_thresh_k = hbm_free_gb * 1024 * 1024 / max(kv_bytes_tok_kb, 1) / 1000
+    spill_thresh_k = hbm_free_gb * 1e9 / (max(kv_bytes_tok_kb, 1) * 1024) / 1000
     cache_hit_gap   = cache_hit - cache_hit_tw
 
     # Estimate decode tokens from throughput × duration
     decode_tokens_est = int(max(tp_active, throughput * 0.1) * duration_s)
-    mb_per_out_token  = (read_gb * 1024 / max(decode_tokens_est, 1)) if decode_tokens_est > 0 else 0.0
+    mb_per_out_token  = (read_gb * 1000 / max(decode_tokens_est, 1)) if decode_tokens_est > 0 else 0.0
 
     # ── Data-availability badges (retained, not rendered in Executive) ───────
     # Kept so the coverage signal stays available to callers and to any future
@@ -6640,6 +6680,123 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _ssd_bw_pct = (nvme_rd_bw / _ssd_bw_target_mbs * 100.0) \
         if nvme_rd_bw > 0 and _ssd_bw_target_mbs > 0 else 0.0
 
+    # ---- KV cache generated during the run ---------------------------------
+    # Resolved before the findings so the L3.5 finding's "KV generated in the
+    # run" uses these same token counts as the KPI tile further down; the two
+    # once printed 8,688.1 and 9,367 "GB" for one run.
+    #
+    # "Generated" means KV that the GPUs actually COMPUTED. A prefill token
+    # served from the prefix cache did not generate KV -- it reused KV that
+    # already existed -- so counting all prompt tokens would overstate this by
+    # whatever the hit rate is, which on these runs is ~95%: a 20x error.
+    #
+    #   generated tokens = (prompt - cached) + decode
+    #                    = recomputed prefill + every output token
+    #
+    # Both terms are measured counters. The byte figure needs KV bytes per
+    # token, which comes from the shared resolver and is exact only when a
+    # model config was supplied; when it cannot be resolved the tile reports
+    # tokens and says the byte figure is unavailable rather than publishing a
+    # default dressed as a measurement.
+    _kvg_prompt = _safe_float(_tok_den, 0.0)
+    _kvg_cached = _safe_float(_tok_num, 0.0)
+    # _tok_num matches on 'cached_tokens_total'.  An engine that exports only
+    # realtime_tokens_total{mode="prefill_cache"} -- which is the column the
+    # comparator reads, and the one this report's own cache-hit formula is
+    # defined on -- does not match that substring, so cached came back 0 while
+    # prompt resolved fine.  (prompt - 0) + decode then reports the ENTIRE
+    # prompt as newly computed KV: at a 98.8% hit rate that is 83x high, and
+    # the only sign is a "- 0 cached" buried in the note.
+    # The realtime phase counters, resolved the way the phase-throughput
+    # chart resolves them: _amoprof_read_columns_substr requires BOTH
+    # substrings in the column name, so it matches whichever form the label
+    # expansion produced -- [mode=decode], {mode="decode"}, or anything else
+    # carrying both tokens.  A hand-written list of candidate names was the
+    # first attempt here, and it was guesswork: this is the function that
+    # already found these columns on the run in question, which is why its
+    # output-token chart carried "fallback (generation_tokens_total absent)"
+    # while this tile reported the totals missing.
+    _kvg_phase: dict = {}
+    try:
+        _kvg_sg_path = _first_existing(raw_dir, ["sglang_timeseries.csv"])
+        if _kvg_sg_path:
+            # EVERY matching column, not the first: see
+            # _amoprof_read_series_substr. A counter fanned out per rank is
+            # only whole when its series are summed, and the End report has
+            # summed them all along, so taking one here was a divergence
+            # waiting on a deployment that fans these out.
+            _kvg_phase = _amoprof_read_series_substr(_kvg_sg_path, {
+                "prefill_compute": ["realtime_tokens_total",
+                                    "mode=prefill_compute"],
+                "prefill_cache":   ["realtime_tokens_total",
+                                    "mode=prefill_cache"],
+                "decode":          ["realtime_tokens_total", "mode=decode"],
+            }) or {}
+    except Exception:
+        _kvg_phase = {}
+
+    def _kvg_counter_delta(_key) -> float:
+        """Window total of a cumulative counter, by the shared kernel.
+
+        The sum of positive per-step differences per column, then summed
+        across columns -- reset-safe inside the window, and equal to
+        last - first on a clean monotonic series. The arithmetic lives in
+        metric_kernels.counter_window_total so that this tile, the End
+        report's _delta_sum_metric and the comparison's _kv_delta cannot
+        drift apart again.
+        """
+        return float(_k_counter_total(_kvg_phase.get(_key) or [])["total"])
+
+    if _kvg_cached <= 0:
+        _kvg_cached = _kvg_counter_delta("prefill_cache")
+    _kvg_decode = _ts_delta(sglang_ts, "generation_tokens_total",
+                            "sglang_generation_tokens_total")
+
+    # Some deployments export realtime_tokens_total{mode=...} and NOT the
+    # prompt_tokens_total / generation_tokens_total counters.  On one such run
+    # this tile read "not collected" while the report's own cache-hit tile was
+    # computing a percentage from Δrealtime_tokens_total{mode="prefill_cache"}
+    # and {mode="prefill_compute"} two tiles above it, and its output-token
+    # chart was reading {mode="decode"} with the footnote "fallback
+    # (generation_tokens_total absent)".  Every input existed; only this tile
+    # did not look for them.
+    #
+    #   prompt = prefill_cache + prefill_compute   (the cache-hit denominator)
+    #   decode = decode mode
+    _kvg_prompt_src = ""
+    if _kvg_prompt <= 0:
+        _pc = _kvg_counter_delta("prefill_compute")
+        if _pc > 0 and _kvg_cached > 0:
+            _kvg_prompt = _kvg_cached + _pc
+            _kvg_prompt_src = (
+                f"prompt derived as Δrealtime_tokens_total"
+                f"{{mode=prefill_cache}} + {{mode=prefill_compute}} "
+                f"({_kvg_cached:,.0f} + {_pc:,.0f}) — "
+                f"sglang_prompt_tokens_total is not exported here")
+        elif _pc > 0:
+            # Compute alone IS the recomputed prefill, which is the term this
+            # tile actually needs; no cached figure is required for it.
+            _kvg_prompt = _pc
+            _kvg_cached = 0.0
+            _kvg_prompt_src = (
+                f"recomputed prefill taken directly from "
+                f"Δrealtime_tokens_total{{mode=prefill_compute}} "
+                f"({_pc:,.0f}) — neither prompt_tokens_total nor a cached "
+                f"total is exported here")
+    _kvg_decode_src = ""
+    if _kvg_decode <= 0:
+        _v_d = _kvg_counter_delta("decode")
+        if _v_d > 0:
+            _kvg_decode = _v_d
+            _kvg_decode_src = (
+                f"decode from Δrealtime_tokens_total{{mode=decode}} "
+                f"({_v_d:,.0f}) — sglang_generation_tokens_total is not "
+                f"exported here")
+    _kvg_recomp = max(0.0, _kvg_prompt - _kvg_cached)
+    _kvg_new_tok = _kvg_recomp + _kvg_decode
+    # What the run would have had to compute with no cache at all. The ratio
+    # of the two is what the hierarchy actually bought.
+    _kvg_demand_tok = _kvg_prompt + _kvg_decode
     findings_items: List[str] = []
 
     # HIGH-PRIORITY: blktrace coverage warning. If captured bytes are much less
@@ -6706,9 +6863,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _tier_long = (_be.display_name if _be and _be.display_name else "L3 backing tier")
         _tier = _tier_long.split()[0]
         _is_local = bool(_be and _be.backend_class == "local_ssd")
-        _computed = _kv_token_delta(raw_dir, ["mode=prefill_compute"]) or 0.0
+        # KV generated = the KPI tile's own resolution (computed prefill +
+        # output), so the finding and the tile cannot print two KV totals.
+        _computed = (_kvg_recomp if _kvg_new_tok > 0 else
+                     _kv_token_delta(raw_dir, ["mode=prefill_compute"]) or 0.0)
         _reused = _kv_token_delta(raw_dir, ["mode=prefill_cache"]) or 0.0
-        _output = _kv_token_delta(raw_dir, ["generation_tokens_total"]) or 0.0
+        _output = (_kvg_decode if _kvg_new_tok > 0 else
+                   _kv_token_delta(raw_dir, ["generation_tokens_total"]) or 0.0)
         _prompt = _kv_token_delta(raw_dir, ["prompt_tokens_total"]) or (_computed + _reused)
         _trd = _k_token_reuse_density(_reused, _computed, _output, kv_bytes_tok_kb)
         _kv_generated = _trd["kv_generated_tokens"]    # tokens whose KV was newly created
@@ -6726,7 +6887,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             (f'Window totals from SGLang HiCache counters (one count per token; TP ranks are not '
              f'double-counted). KV generated in the run = {_computed:,.0f} computed prompt + '
              f'{_output:,.0f} output tokens = <strong>{_kv_generated:,.0f} tokens</strong> '
-             f'(≈ {_kv_gen_gb:,.0f} GB at {kv_bytes_tok_kb:.0f} KB/token).'
+             f'(≈ {_kv_gen_gb:,.1f} GB at {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f} KB/token).'
              f'<ul style="margin:6px 0 0 18px;padding:0">'
              f'<li><strong>Backed up to {_tier}:</strong> {_bk_t:,} tokens = '
              f'<strong>{_pct(_bk_t, _kv_generated)} of the KV generated</strong>. '
@@ -6775,7 +6936,51 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             "prefetched_tokens_total", "sglang_prefetched_tokens_total",
             "evicted_tokens_total", "sglang_evicted_tokens_total"))
         _evicted = evicted_tokens
-        if _has_sg_counters and l3_sglang_activity_tokens == 0:
+        if l3_backend_class == "none" and _l3_no_tier is not None:
+            # SGLang reports no storage backend.  Zero backup/prefetch
+            # is then the expected reading, not an idle tier, and "re-run with
+            # a larger context to drive L3 traffic" asks for traffic to a tier
+            # that does not exist.  Say what the counters mean for this
+            # architecture and whether adding a tier is worth considering.
+            _ev_n = int(_evicted or 0)
+            _proc = (_kvg_prompt + _kvg_decode) if (_kvg_prompt + _kvg_decode) > 0 else 0.0
+            _ev_ratio = (_ev_n / _proc) if _proc > 0 else 0.0
+            _hit = _safe_float(cache_hit, 0.0)
+            _pressure = _ev_ratio >= 1.0 or (_ev_n > 0 and 0 < _hit < 50)
+            _tiers = ("L1 HBM only" if "no HiCache" in _l3_no_tier.display_name
+                      else "L1 HBM + L2 DRAM only")
+            _held = "L1" if _tiers == "L1 HBM only" else "L1 + L2"
+            findings_items.append(finding(
+                "L3 TIER · NOT CONFIGURED",
+                (f'This run has no L3 tier ({_tiers}; SGLang server_info reports '
+                 f'<code>hicache_storage_backend</code> = None), so SGLang '
+                 f'<code>backuped_tokens_total</code> and <code>prefetched_tokens_total</code> '
+                 f'staying at 0 is expected — there is no tier to back up to or prefetch from. '
+                 + (f'<code>load_back_tokens_total</code> = {int(loadback_tokens):,} is L2→L1 '
+                    f'restore from host DRAM. '
+                    if loadback_tokens > 0 else '')
+                 + (f'<code>evicted_tokens_total</code> = {_ev_n:,}'
+                    + (f' ({_ev_ratio:,.1f}× the {_proc:,.0f} tokens processed)' if _proc > 0 else '')
+                    + (': with no L3 there is nowhere to offload evicted KV, so KV not also held '
+                       'in L2 is dropped and recomputed if a later request needs it. '
+                       if _held != "L1" else
+                       ': with no lower tier, evicted KV is dropped and recomputed if a later '
+                       'request needs it. ')
+                    if _ev_n > 0 else '')
+                 + '<strong>Recommendation:</strong> '
+                 + ('the eviction rate'
+                    + (f' and {_hit:.1f}% cache hit' if _hit > 0 else '')
+                    + (' suggest' if _hit > 0 else ' suggests')
+                    + f' the working set exceeds {_held} — consider adding an L3 tier '
+                      '(local NVMe or an AI Memory Node) so evicted KV is kept instead of recomputed.'
+                    if _pressure else
+                    f'{_held} held this workload without heavy eviction; add an L3 tier only if '
+                    'larger contexts or more sessions are expected.')),
+                plain=(f"No L3 tier is configured ({_tiers}), so zero backup/prefetch is expected. "
+                       + (f"{_ev_n:,} evicted tokens had no L3 to be offloaded to. " if _ev_n > 0 else "")
+                       + ("Consider adding an L3 tier to keep evicted KV."
+                          if _pressure else "No L3 tier is needed for this workload as observed."))))
+        elif _has_sg_counters and l3_sglang_activity_tokens == 0:
             # Counters present, but no reliable L3 storage evidence. load_back-only
             # and evicted-only are not counted as L3 usage.
             findings_items.append(finding(
@@ -6904,7 +7109,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # or eviction policy is too aggressive.
         findings_items.append(finding(
             "KV CACHE · L3",
-            f'HiCache L3 (local storage) is write-dominant: <strong>{write_gb:.1f} GB writes</strong> vs '            f'{read_gb*1024:.1f} MB reads — a backup-heavy phase with no significant L2→L1 load-back restore. '            f'Device busy-time {nvme_util:.1f}% mean. '            f'<strong>Action:</strong> consider tuning HiCache eviction (raise L2 size or '            f'lower spill threshold) if the working set fits in DRAM; otherwise the '            f'writes are pre-staging future load-backs and are healthy.',
+            f'HiCache L3 (local storage) is write-dominant: <strong>{write_gb:.1f} GB writes</strong> vs '            f'{read_gb*1000:.1f} MB reads — a backup-heavy phase with no significant L2→L1 load-back restore. '            f'Device busy-time {nvme_util:.1f}% mean. '            f'<strong>Action:</strong> consider tuning HiCache eviction (raise L2 size or '            f'lower spill threshold) if the working set fits in DRAM; otherwise the '            f'writes are pre-staging future load-backs and are healthy.',
             plain=(f"The L3 (local storage) cache is being written to a lot ({write_gb:.0f} GB) but barely "
                    f"read back. Either the data being saved is rarely needed again, or RAM "
                    f"already has what the model needs. If this is unexpected, check whether "
@@ -6976,8 +7181,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _fs_bsize       = _safe_float(smart.get("fs_block_size", 0))
     _wr_merge_ratio = _safe_float(_ba_sum.get("sys_block_wr_merge_ratio", 0))
     _rd_merge_ratio = _safe_float(_ba_sum.get("sys_block_rd_merge_ratio", 0))
-    _avg_wr_io_kb   = _safe_float(_ba_sum.get("sys_block_avg_wr_io_kb", 0))
-    _avg_rd_io_kb   = _safe_float(_ba_sum.get("sys_block_avg_rd_io_kb", 0))
+    # sys_block_avg_*_io_kb are sectors x 512 / 1024 (KiB); shown as decimal KB.
+    _avg_wr_io_kb   = _k_kb_from_bytes(_safe_float(_ba_sum.get("sys_block_avg_wr_io_kb", 0)) * 1024)
+    _avg_rd_io_kb   = _k_kb_from_bytes(_safe_float(_ba_sum.get("sys_block_avg_rd_io_kb", 0)) * 1024)
     _merge_note     = str(_ba_sum.get("block_layer_merge_note", "")).strip()
 
     # ── Block-layer merging (FS-driven op-count reduction) ──────────────
@@ -7102,89 +7308,95 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         or _safe_float(_pick(setup, ["HiCache ratio", "hicache_ratio"], 0), 0) > 0)
     if _enabled_truthy or (isinstance(cache_enabled, str) and "+" in cache_enabled) \
             or _tier_evidence:
-        # L2 capacity from /proc/meminfo (DramMonitor); L3 from df-based FS size.
-        def _cap_fmt(gb: float) -> str:
-            if gb >= 1024:
-                return f"{gb/1024:.1f} TB"
-            if gb > 0:
-                return f"{gb:.0f} GB"
-            return ""
-        l2_cap = _cap_fmt(l2_dram_capacity_gb)
-        l3_cap = _cap_fmt(l3_fs_total_gb)
-        # A remote store has no local filesystem, so l3_fs_total_gb is zero
-        # and the L3.5 tier was listed without a capacity while L2 carried
-        # one.  Read the store's own accounting instead, and break it into
-        # memory and storage when both are configured, since "1.5 TB" alone
-        # hides whether it is DRAM or SSD — which is the question a reader of
-        # this line is asking.
-        if not l3_cap:
-            try:
-                _cf = _first_existing(raw_dir, ["l35_store_capacity.csv"])
-                _cc = (_amoprof_read_columns_raw(
-                    _cf, ["l35_store_mem_cap_b", "l35_store_file_cap_b"])
-                    if _cf else {})
-                def _mx(_k):
-                    _v = [x for x in (_cc.get(_k) or []) if x == x and x > 0]
-                    return max(_v) / 1e9 if _v else 0.0
-                _mem_gb, _file_gb = _mx("l35_store_mem_cap_b"), _mx("l35_store_file_cap_b")
-                if _mem_gb and _file_gb:
-                    l3_cap = (f"{_cap_fmt(_mem_gb)} DRAM + "
-                              f"{_cap_fmt(_file_gb)} SSD")
-                elif _mem_gb:
-                    l3_cap = f"{_cap_fmt(_mem_gb)} DRAM"
-                elif _file_gb:
-                    l3_cap = f"{_cap_fmt(_file_gb)} SSD"
-            except Exception:
-                l3_cap = ""
-        l2_str = f"L2 DRAM ({l2_cap})" if l2_cap else "L2 DRAM"
-        # Keep the executive hero generic: do not expose the backend/vendor
-        # name (for example Mooncake) in the top-line cache-tier summary. The
-        # detailed setup table still carries the exact backend/type.
-        l3_str = (f"L3 (local storage) ({l3_cap})" if l3_cap
-                  else "L3 (local storage)")
-        # List only the tiers this run actually has, rather than always
-        # claiming "L2 + L3": naming a tier that is not configured is worse
-        # than saying nothing, because it sends the reader looking for charts
-        # that legitimately do not exist.
-        _tiers_present = []
-        if (l2_dram_capacity_gb or 0) > 0 or _safe_float(
+        # Every KV-cache layer this run has, with the memory type behind it
+        # and the capacity it holds for KV, so a report can be tied to its
+        # configuration at a glance (e.g. L3.5 on DRAM vs DRAM + CXL):
+        #   Enabled · L1 (HBM: x GB) + L2 (DRAM: y GB) + L3 (NVMe SSD: z GB)
+        #             + L3.5 (DRAM: a GB + CXL: b GB + NVMe SSD: c GB)
+        # Capacities are the KV allocation of each layer, in decimal GB.  The
+        # hero stays vendor-neutral: the setup table names the backend.
+        def _gb(gb: float) -> str:
+            return f"{gb:,.0f} GB" if gb >= 10 else f"{gb:,.1f} GB"
+
+        def _setup_gb(*keys) -> float:
+            return _safe_float(_pick(setup, list(keys), 0), 0)
+
+        _be_cls = str(l3_backend_class or "").lower()
+        _remote = _be_cls.startswith("remote") or _be_cls == "ai_memory_node"
+        _layers: list = []
+
+        # L1: the GPU KV pool, max_total_num_tokens x KV bytes per token
+        # (full model across ranks).
+        # The server publishes both pool sizes as gauges; summary keys and the
+        # setup file are fallbacks for runs without the timeseries.
+        def _gauge_max(*names) -> float:
+            return _safe_float(_ts_col(sglang_ts, *names).get("max", 0), 0)
+        _pool_tok = (_gauge_max("max_total_num_tokens")
+                     or _safe_float(_pick(sglang, ["max_total_num_tokens",
+                                                   "sglang_max_total_num_tokens"], 0), 0)
+                     or _setup_gb("max_total_num_tokens"))
+        _bpt = _safe_float(kv_bytes_tok_kb, 0) * 1024.0
+        _layers.append(f"L1 (HBM: {_gb(_k_gb_from_bytes(_pool_tok * _bpt))})"
+                       if _pool_tok > 0 and _bpt > 0 else "L1 (HBM)")
+
+        # L2: the HiCache host allocation — hicache_host_total_tokens x KV
+        # bytes.  l2_dram_capacity_gb falls back to the whole host's DRAM when
+        # no HiCache size is configured, which is not what the cache holds.
+        _l2_tok = _gauge_max("hicache_host_total_tokens")
+        _l2_gb = (_k_gb_from_bytes(_l2_tok * _bpt) if _l2_tok > 0 and _bpt > 0
+                  else (l2_dram_capacity_gb or 0))
+        if _l2_gb > 0 or _gauge_max("hicache_host_used_tokens") > 0 or _safe_float(
                 _pick(sglang, ["hicache_host_used_tokens",
                                "sglang_hicache_host_used_tokens"], 0), 0) > 0:
-            _tiers_present.append(l2_str)
-        if (l3_fs_total_gb or 0) > 0 or str(_pick(setup, [
-                "L3 storage type", "L3 Device", "L3 Mount Path"], "")).strip():
-            _tiers_present.append(l3_str)
-        # Only append a standalone "L3.5 (remote KV store)" tier when
-        # the second L3 branch above did NOT already add it.  When
-        # l3_backend_class is remote/AI Memory Node, that branch appends
-        # "L3 (local storage)" which apply_l3_label_rewrites rewrites to
-        # "L3.5 (AI Memory Node / remote storage)" downstream, and the
-        # combined header ended up double-labelling the remote tier as
-        # both "L3.5 (AI Memory Node / remote storage) + L3.5 (remote KV
-        # store)".  Suppress the second entry in that case.
+            _layers.append(f"L2 (DRAM: {_gb(_l2_gb)})" if _l2_gb > 0 else "L2 (DRAM)")
+
+        # L3: local NVMe SSD on the GPU node.
+        if not _remote and _be_cls != "none" and ((l3_fs_total_gb or 0) > 0 or str(_pick(setup, [
+                "L3 storage type", "L3 Device", "L3 Mount Path"], "")).strip()):
+            _layers.append(f"L3 (NVMe SSD: {_gb(l3_fs_total_gb)})"
+                           if (l3_fs_total_gb or 0) > 0 else "L3 (NVMe SSD)")
+
+        # L3.5: the AI Memory Node.  The store's own accounting splits memory
+        # from file (SSD) capacity but not DRAM from CXL inside the memory
+        # pool, so that split comes from the setup file when given and is
+        # checked against the measured memory total; otherwise it is said to
+        # be unreported rather than all called DRAM.
         _hicache_backend_set = bool(str(_pick(setup, [
             "HiCache storage backend", "hicache_storage_backend",
             "Remote storage endpoint"], "")).strip())
-        _already_named_remote_l3 = (
-            # Include remote_mooncake here — it maps to the same rewritten
-            # "L3.5 (AI Memory Node / remote storage)" label as remote_storage.
-            (str(l3_backend_class or "").lower().startswith("remote")
-             or str(l3_backend_class or "").lower() == "ai_memory_node")
-            and l3_str in _tiers_present
-        )
-        # ...and only when the resolved backend is actually REMOTE.
-        # _hicache_backend_set is true whenever a backend is configured at
-        # all, which on a local run means "file" -- so a local-SSD
-        # deployment had "+ L3.5 (remote KV store)" appended to its header
-        # and claimed a memory node it does not have.
-        _backend_is_remote = (
-            str(l3_backend_class or "").lower().startswith("remote")
-            or str(l3_backend_class or "").lower() == "ai_memory_node")
-        if (_hicache_backend_set and _backend_is_remote
-                and not _already_named_remote_l3):
-            _tiers_present.append("L3.5 (remote KV store)")
-        _cache_tier_label = ("Enabled \u00b7 " + " + ".join(_tiers_present)
-                             if _tiers_present else "Enabled")
+        _mem_gb = _file_gb = 0.0
+        try:
+            _cf = _first_existing(raw_dir, ["l35_store_capacity.csv"])
+            _cc = (_amoprof_read_columns_raw(
+                _cf, ["l35_store_mem_cap_b", "l35_store_file_cap_b"]) if _cf else {})
+            def _mx(_k):
+                _v = [x for x in (_cc.get(_k) or []) if x == x and x > 0]
+                return _k_gb_from_bytes(max(_v)) if _v else 0.0
+            _mem_gb, _file_gb = _mx("l35_store_mem_cap_b"), _mx("l35_store_file_cap_b")
+        except Exception:
+            pass
+        if _remote and (_hicache_backend_set or _mem_gb > 0 or _file_gb > 0):
+            _dram_s = _setup_gb("L3.5 DRAM GB", "L3.5 DRAM capacity GB", "l35_dram_gb")
+            _cxl_s = _setup_gb("L3.5 CXL GB", "L3.5 CXL capacity GB", "l35_cxl_gb")
+            _ssd_s = _setup_gb("L3.5 SSD GB", "L3.5 NVMe SSD GB", "L3.5 SSD capacity GB", "l35_ssd_gb")
+            _parts = []
+            if _dram_s > 0 or _cxl_s > 0:
+                if _dram_s > 0:
+                    _parts.append(f"DRAM: {_gb(_dram_s)}")
+                if _cxl_s > 0:
+                    _parts.append(f"CXL: {_gb(_cxl_s)}")
+            elif _mem_gb > 0:
+                _parts.append(f"memory: {_gb(_mem_gb)} [DRAM/CXL split not reported]")
+            _ssd = _file_gb or _ssd_s
+            if _ssd > 0:
+                _parts.append(f"NVMe SSD: {_gb(_ssd)}")
+            _l35 = "L3.5 (" + " + ".join(_parts) + ")" if _parts else "L3.5"
+            _split = _dram_s + _cxl_s
+            if _split > 0 and _mem_gb > 0 and abs(_split - _mem_gb) > 0.05 * _mem_gb:
+                _l35 += (f" [setup DRAM + CXL {_gb(_split)} ≠ measured memory "
+                         f"{_gb(_mem_gb)}]")
+            _layers.append(_l35)
+        _cache_tier_label = "Enabled · " + " + ".join(_layers)
     else:
         _cache_tier_label = (str(cache_enabled) if cache_enabled else "Disabled")
 
@@ -8086,10 +8298,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _nvme_wr_bw_t = list(_nvme_time)
         if not _nvme_rd_mbps and _nvme_raw.get("read_bytes"):
             _nvme_rd_bw_t, _rd_rate = _rate_with_time(_nvme_raw["read_bytes"], _nvme_time)
-            _nvme_rd_mbps = [v / (1024 * 1024) for v in _rd_rate]
+            _nvme_rd_mbps = [v / 1e6 for v in _rd_rate]
         if not _nvme_wr_mbps and _nvme_raw.get("write_bytes"):
             _nvme_wr_bw_t, _wr_rate = _rate_with_time(_nvme_raw["write_bytes"], _nvme_time)
-            _nvme_wr_mbps = [v / (1024 * 1024) for v in _wr_rate]
+            _nvme_wr_mbps = [v / 1e6 for v in _wr_rate]
 
         # IOPS — collector emits per-sample gauge already (rd_iops/wr_iops),
         # so no delta needed.  When only cumulative counters are present
@@ -8269,7 +8481,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _kv_src = str(_kv_resolution.get("source") or "")
         _kv_exact = bool(_kv_resolution.get("exact"))
         _kv_qual = ("exact — " + _kv_src) if _kv_exact else (_kv_src or "assumed")
-        _kv_header = (f"KV = {_kv_kb:.0f} KB/token ({_kv_qual})"
+        _kv_header = (f"KV = {_k_kb_from_bytes(_kv_kb * 1024):.0f} KB/token ({_kv_qual})"
                        if _kv_kb > 0 else "KV bytes/token unavailable — correlations shown without KV scaling")
 
         # Maps a tier token to the AI stack layer it measures, so each card
@@ -8428,6 +8640,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     out[_lab] = _v
             return out if len(out) == 3 else {}
 
+        _n_by_title: dict = {}
         for _p_title, _p_base, _p_scale, _p_unit, _p_src in _PCTL_SPECS:
             _bases = _p_base if isinstance(_p_base, list) else [_p_base]
             _pw, _used = {}, ""
@@ -8466,6 +8679,16 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _p_disp = "TPOT / ITL (inter-token latency)"
                 _p_src += (" · ITL stands in for TPOT "
                            "(dedicated TPOT histogram not exported)")
+            # Say what n counts.  Each histogram is observed at a different
+            # moment: TTFT when a request gets its first token, E2E and the
+            # token-size histograms when it completes, ITL once per gap
+            # between output tokens.  All printed "observations", so TTFT
+            # n=517 beside E2E n=516 read as a counting error; the
+            # difference is requests in flight at the window edges.
+            _n_label = ("inter-token gaps" if _p_title.startswith("TPOT") else
+                        "requests · first token in window" if _p_title == "TTFT" else
+                        "requests · completed in window")
+            _n_by_title[_p_title] = _safe_float(_pw.get("observations", 0), 0)
             _pctl_method = (
                 "Prometheus histogram_quantile over the range"
                 if _from_summary else
@@ -8476,7 +8699,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _pctl_html += _amoprof_exec_svg_percentile_bars(
                 f"{_p_disp} — p50 / p90 / p99",
                 f"whole window · \u0394{_p_src} · {_pctl_method}",
-                _p_unit, _pw, _PCTL_COLORS)
+                _p_unit, _pw, _PCTL_COLORS, n_label=_n_label)
             # Mean beside p50, with the ratio as a tail indicator: percentiles
             # say where the boundary sits, only the mean is sensitive to how
             # far beyond it the worst cases run.
@@ -8589,7 +8812,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f"{_r_title} \u2014 p50 / p90 / p99",
                 f"active intervals only \u00b7 {len(_rv):,} of {len(_all_iv):,} "
                 f"({_duty:.1f}% duty cycle) \u00b7 not per request",
-                _r_unit, _rp, _PCTL_COLORS)
+                _r_unit, _rp, _PCTL_COLORS, n_label="active sampling intervals")
             _pctl_rows.append(
                 f"<b>{_html.escape(_r_title)}</b> p50 {_rp['p50']:,.1f} \u00b7 "
                 f"p90 {_rp['p90']:,.1f} \u00b7 p99 {_rp['p99']:,.1f} {_r_unit} "
@@ -8960,6 +9183,25 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "measurements.",
                 layers="A3_DRAM", expanded=True))
 
+        # Why TTFT's n differs from the completion-based charts: a request
+        # running when the window opens completes inside it (E2E counts it,
+        # TTFT already saw its first token before); one running when it
+        # closes got its first token inside but has not completed.
+        _n_note = ""
+        _n_ttft = _n_by_title.get("TTFT", 0)
+        _n_done = _n_by_title.get("E2E request latency", 0)
+        if _n_ttft > 0 and _n_done > 0 and abs(_n_ttft - _n_done) >= 1:
+            _run = [v for v in (_amoprof_read_columns_raw(_sg_path, ["num_running_reqs"])
+                                .get("num_running_reqs") or []) if v == v]
+            _edges = (f" {_run[0]:,.0f} requests were running when the window opened and "
+                      f"{_run[-1]:,.0f} when it closed." if len(_run) >= 2 else "")
+            _n_note = (
+                f"<br><br><b>Why the n counts differ:</b> TTFT counts requests whose first "
+                f"token arrived in the window ({_n_ttft:,.0f}); E2E latency and the token-size "
+                f"charts count requests that completed in it ({_n_done:,.0f}). The "
+                f"{abs(_n_done - _n_ttft):,.0f}-request difference is requests in flight at the "
+                f"window edges.{_edges} TPOT / ITL counts gaps between output tokens, not "
+                f"requests.")
         if _pctl_html:
             # Emitted above the Bottleneck Analysis section (directly under the
             # KPI grid) rather than appended to _cards.
@@ -8971,7 +9213,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 "open-ended top bucket is reported as that bucket's floor (a lower bound). "
                 f"{_kv_header}",
                 _pctl_html,
-                "<br>".join(_pctl_rows)
+                "<br>".join(_pctl_rows) + _n_note
                 + "<br><br>A p99 far above p50 is tail latency: a minority of requests are "
                 "paying a cost the mean hides. Wide input/output token spreads mean the "
                 "workload itself is heterogeneous, so a latency tail may reflect request "
@@ -9002,7 +9244,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 if _m_size:
                     _cand = _safe_float(_m_size.group(1), 0)
                     _per_gpu_w = _cand * (1 if _w_dtype == 1 else 2) / max(tp_count or 1.0, 1.0)
-                    if 0 < _per_gpu_w <= _safe_float(_gpu_cfg.get("hbm_per_gpu_gb", 0), 0) or \
+                    if 0 < _per_gpu_w <= _k_gb_from_gib(_safe_float(_gpu_cfg.get("hbm_per_gpu_gb", 0), 0)) or \
                        (0 < _per_gpu_w <= 400):
                         _params_b = _cand
             _hbm_res = _resolve_gpu_hbm(gpu, setup, _gpu_cfg)
@@ -9149,7 +9391,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                        "observations": float(len(_srt))}
                 _bar_svg = _amoprof_exec_svg_percentile_bars(
                     f"{_ch_name} \u2014 p50 / p90 / p99", _ch_form, "%",
-                    _pc, {"p50": "#38bdf8", "p90": "#f59e0b", "p99": "#22c55e"})
+                    _pc, {"p50": "#38bdf8", "p90": "#f59e0b", "p99": "#22c55e"},
+                    n_label="samples")
                 _ch_html += _bar_svg
                 if _ch_name not in _OVERVIEW_HIDDEN_CH:
                     _ch_bars_svg += _bar_svg
@@ -9420,15 +9663,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # confused.
         _l2_used_tok = _sg_raw.get("hicache_host_used_tokens") or []
         _l2_total_tok = _sg_raw.get("hicache_host_total_tokens") or []
-        _l2_used_gb = [v * kv_bytes_tok_kb / 1024.0 / 1024.0 for v in _l2_used_tok]
+        _l2_used_gb = [_k_gb_from_bytes(v * kv_bytes_tok_kb * 1024.0) for v in _l2_used_tok]
         _l2_fill_pct = []
         if _l2_used_tok and _l2_total_tok:
             _n_l2 = min(len(_l2_used_tok), len(_l2_total_tok))
             _l2_fill_pct = [(_l2_used_tok[i] / _l2_total_tok[i] * 100.0)
                             if _l2_total_tok[i] > 0 else 0.0 for i in range(_n_l2)]
-        # Movement across the L1<->L2 boundary, in bytes/s.
-        _l2_in_mbps = [v * kv_bytes_tok_kb / 1024.0 for v in _evict_rate]   # L1->L2
-        _l2_out_mbps = [v * kv_bytes_tok_kb / 1024.0 for v in _load_rate]   # L2->L1
+        # Movement across the L1<->L2 boundary, in decimal MB/s (bytes/s / 1e6).
+        _l2_in_mbps = [v * kv_bytes_tok_kb * 1024.0 / 1e6 for v in _evict_rate]   # L1->L2
+        _l2_out_mbps = [v * kv_bytes_tok_kb * 1024.0 / 1e6 for v in _load_rate]   # L2->L1
         _l2_derived_ok = bool((_l2_used_tok and any(v > 0 for v in _l2_used_tok))
                               or (_l2_in_mbps and any(v > 0 for v in _l2_in_mbps))
                               or (_l2_out_mbps and any(v > 0 for v in _l2_out_mbps)))
@@ -9536,14 +9779,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 or str(_pick(setup, ["L3 Device", "L3 Mount Path",
                                      "file_storage_path"], "")).strip()
                 or (l3_fs_total_gb or 0) > 0))
-        _l3_fs_used = _safe_float(smart.get("hicache_fs_used_gb", 0), 0)
-        _l3_fs_total = _safe_float(smart.get("hicache_fs_total_gb", 0), 0)
+        _l3_fs_used = _k_collector_gb("hicache_fs_used_gb", _safe_float(smart.get("hicache_fs_used_gb", 0), 0))
+        _l3_fs_total = _k_collector_gb("hicache_fs_total_gb", _safe_float(smart.get("hicache_fs_total_gb", 0), 0))
         if _l3_fs_used > 0 and kv_bytes_tok_kb > 0 and _sg_time:
             # A single df snapshot, held flat across the window: honest as a
             # level, not as a trend, and labelled that way.
-            _lvl = _l3_fs_used * 1024.0 * 1024.0 / kv_bytes_tok_kb
+            _lvl = _l3_fs_used * 1e9 / (kv_bytes_tok_kb * 1024.0)
             _l3_tok_series = [_lvl] * len(_sg_time)
-            _l3_tok_cap = (_l3_fs_total * 1024.0 * 1024.0 / kv_bytes_tok_kb
+            _l3_tok_cap = (_l3_fs_total * 1e9 / (kv_bytes_tok_kb * 1024.0)
                            if _l3_fs_total > 0 else 0.0)
             _l3_tok_label = "L3-local storage (df snapshot)"
             _l3_tok_src = (
@@ -9576,7 +9819,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _l3_tok_series = [
                     max(0.0, (_bk[i] - _base_bk) - ((_pf[i] - _base_pf) if _pf else 0.0))
                     for i in range(_n_l3)]
-                _l3_tok_cap = (l3_fs_total_gb * 1024.0 * 1024.0 / kv_bytes_tok_kb
+                _l3_tok_cap = (l3_fs_total_gb * 1e9 / (kv_bytes_tok_kb * 1024.0)
                                if (l3_fs_total_gb > 0 and kv_bytes_tok_kb > 0) else 0.0)
                 _l3_tok_label = "L3-local storage (DERIVED: backup \u2212 prefetch)"
                 _l3_tok_src = (
@@ -9648,8 +9891,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         if kv_bytes_tok_kb > 0:
             for _x in _occ:
                 _occ_gb.append(dict(
-                    _x, v=[v * kv_bytes_tok_kb / 1024.0 / 1024.0 for v in _x["v"]],
-                    cap=(_x.get("cap") or 0) * kv_bytes_tok_kb / 1024.0 / 1024.0))
+                    _x, v=[_k_gb_from_bytes(v * kv_bytes_tok_kb * 1024.0) for v in _x["v"]],
+                    cap=_k_gb_from_bytes((_x.get("cap") or 0) * kv_bytes_tok_kb * 1024.0)))
         _occ_pct_svg = (_amoprof_exec_svg_tier_occupancy(
             _occ_gb, window=_occ_win, wall_start=_occ_wall, mode="abs",
             title="KV bytes resident per cache tier",
@@ -9697,7 +9940,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     + (f" \u00b7 {_pk / _x['cap'] * 100:.0f}% of "
                        f"{_fmt_num(_x['cap'], ' tokens', 0)} capacity"
                        if _x.get("cap") else " \u00b7 capacity not reported")
-                    + f" \u00b7 \u2248 {_fmt_num(_pk * kv_bytes_tok_kb / 1024 / 1024, ' GB', 1)}"
+                    + f" \u00b7 \u2248 {_fmt_num(_k_gb_from_bytes(_pk * kv_bytes_tok_kb * 1024), ' GB', 1)}"
                     if kv_bytes_tok_kb > 0 else "")
             _cards.append(_card(
                 "KV tokens resident per cache tier \u2014 whole run",
@@ -9754,8 +9997,8 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     "Output throughput (tok/s, per-interval)", "GPU util (%)",
                     _out_x, _out_y, point_color="#38bdf8")
         if _hbm_used_series and (_in_tok_rate or _out_tok_rate):
-            # DCGM `mem_used` is in MB — convert to GB for readability.
-            _hbm_gb_series = [v / 1024.0 for v in _hbm_used_series]
+            # DCGM `mem_used` is MiB — convert to decimal GB.
+            _hbm_gb_series = [_k_gb_from_mib(v) for v in _hbm_used_series]
             _in_x, _in_y = _align_xy(_sg_rate_t, _in_tok_rate, _gpu_time, _hbm_gb_series)
             _out_x, _out_y = _align_xy(_sg_rate_t, _out_tok_rate, _gpu_time, _hbm_gb_series)
             if _out_ok and len(_out_x) >= 3:
@@ -9790,7 +10033,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         try:
             if _hbm_used_series and _gpu_time:
                 _t_c, _v_c = _collapse_per_gpu(_gpu_time, _hbm_used_series, "sum")
-                _hbm_used_gb_series = [v / 1024.0 for v in _v_c]
+                _hbm_used_gb_series = [_k_gb_from_mib(v) for v in _v_c]
                 _gpu_time_cap = _t_c
             # The canonical resolver already established the device total for
             # the tiles; reuse it rather than re-deriving a second answer.
@@ -10163,8 +10406,11 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _dram_path, ["time_sec", "used_gb", "total_gb"])
             if _dram_path else {})
         _l2_dram_t = _dram_raw.get("time_sec") or []
-        _l2_dram_used_series = _dram_raw.get("used_gb") or []
-        _l2_dram_total_series = _dram_raw.get("total_gb") or []
+        # /proc/meminfo used_gb / total_gb are GiB (kB / 1024 / 1024).
+        _l2_dram_used_series = [_k_collector_gb("used_gb", v) if v == v else v
+                                for v in (_dram_raw.get("used_gb") or [])]
+        _l2_dram_total_series = [_k_collector_gb("total_gb", v) if v == v else v
+                                 for v in (_dram_raw.get("total_gb") or [])]
         _l2_dram_cap_gb = (max(v for v in _l2_dram_total_series if v == v)
                            if _l2_dram_total_series and any(v > 0 for v in _l2_dram_total_series)
                            else l2_dram_capacity_gb)
@@ -11975,7 +12221,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             ("GPU util (%)",  _gpu_util_series, _gpu_time, "#f59e0b"),
             (("HBM BW (GB/s)" if _hbm_bw_gbs_series else "HBM BW util (%)"),
              (_hbm_bw_gbs_series or _hbm_bw_util_series), _gpu_time, "#22d3ee"),
-            ("HBM used (GB)", [v / 1024.0 for v in _hbm_used_series] if _hbm_used_series else [],
+            ("HBM used (GB)", [_k_gb_from_mib(v) for v in _hbm_used_series] if _hbm_used_series else [],
              _gpu_time, "#ec4899"),
         ]
         # ---- L2 (host DRAM · HiCache) ----
@@ -12119,9 +12365,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # the DRAM peak only to show relative shape.
             _n_est = min(len(_l2_in_mbps or []), len(_l2_out_mbps or [])) \
                 if (_l2_in_mbps and _l2_out_mbps) else 0
-            _l2_est = ([(_l2_in_mbps[i] + _l2_out_mbps[i]) / 1024.0 for i in range(_n_est)]
+            _l2_est = ([(_l2_in_mbps[i] + _l2_out_mbps[i]) / 1000.0 for i in range(_n_est)]
                        if _n_est else
-                       [v / 1024.0 for v in (_l2_in_mbps or _l2_out_mbps)])
+                       [v / 1000.0 for v in (_l2_in_mbps or _l2_out_mbps)])
             if _l2_est and any(v > 0 for v in _l2_est) and _dram_peak_auto > 0:
                 _bw.append({"tier": "L2",
                             "label": "L2 host DRAM (KV movement est., not PMU)",
@@ -12268,7 +12514,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         for _x in _bw:
             _conv = 1.0
             if _x["tier"] in ("L3", "L3.5"):
-                _conv = 1.0 / 1024.0            # MB/s -> GB/s
+                _conv = 1.0 / 1000.0            # MB/s -> GB/s (decimal)
             elif _x["tier"] == "NET":
                 # Network belongs on this chart: on a disaggregated setup the
                 # link between the GPU node and the L3.5 node carries every KV
@@ -12276,7 +12522,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 # the binding constraint.  It was skipped when this chart moved
                 # to absolute units because the series carried was a link
                 # PERCENTAGE; the MB/s series converts cleanly.
-                _conv = 1.0 / 1024.0            # MB/s -> GB/s
+                _conv = 1.0 / 1000.0            # MB/s -> GB/s (decimal)
             _vals = [v * _conv for v in _x["v"]]
             _pk = max(_vals) if _vals else 0.0
             if _pk > _BW_SANE_MAX_GBS:
@@ -12340,7 +12586,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 if not _x.get("cap") or float(_x["cap"]) <= 0:
                     # _bw carries MB/s for NET/L3/L3.5 and GB/s for L1/L2 —
                     # the chart converts on the way in, this row must too.
-                    _unit_gbs = _pk / 1024.0 if _x["tier"] in ("NET", "L3", "L3.5") else _pk
+                    _unit_gbs = _pk / 1000.0 if _x["tier"] in ("NET", "L3", "L3.5") else _pk
                     _bw_rows.append(
                         f"<b>{_html.escape(_x['label'])}</b> peak "
                         f"{_fmt_num(_unit_gbs, ' GB/s', 2)} \u00b7 no published "
@@ -12396,7 +12642,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 ("A1/A2_L3", "Storage queue depth", _nvme_qd_t, _nvme_qd_series, ""),
                 ("A4_GPU_HBM", "GPU util (%)", _gpu_time, _gpu_util_series, "%"),
                 ("A4_GPU_HBM", "HBM used (GB)", _gpu_time,
-                 [v / 1024.0 for v in _hbm_used_series] if _hbm_used_series else [], "GB"),
+                 [_k_gb_from_mib(v) for v in _hbm_used_series] if _hbm_used_series else [], "GB"),
                 # Concurrency pressure shows up in QUEUEING, not utilisation.
                 # GPU util saturates long before concurrency does — once the
                 # device is busy, another concurrent request adds waiting, not
@@ -12848,7 +13094,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # only added when L3 is actually configured.  Renumber remaining actions
     # so the table stays 1..N contiguous.
     _act_l1_fp8 = ("<b>FP8 KV quantisation</b> — <code>--kv-cache-dtype fp8_e5m2</code><br>"
-                    f"<span class=\"sub\">Halves KV bytes/token ({kv_bytes_tok_kb:.0f}→{kv_bytes_tok_kb/2:.0f} KB/tok), doubles in-HBM capacity, "
+                    f"<span class=\"sub\">Halves KV bytes/token ({_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f}→{_k_kb_from_bytes(kv_bytes_tok_kb * 512):.0f} KB/tok), doubles in-HBM capacity, "
                     f"cuts TPOT{' and L3 (local storage) load' if has_l3 else ''}. &lt;0.5% accuracy impact.</span>")
     _act_prefill = ("<b>Chunked prefill</b> — <code>--chunked-prefill-size 4096</code><br>"
                     "<span class=\"sub\">Interleaves prefill chunks with decode steps, reducing perceived TTFT without changing throughput.</span>")
@@ -13402,8 +13648,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _d = _v[-1] - _v[0]
             return _d if _d >= 0 else 0.0
 
-        _host_gb = _delta("l35_host_written_gb")
-        _nand_gb = _delta("l35_nand_written_gb")
+        # SMART *_written_gb from the collectors: host uses a wrong data-unit
+        # factor and NAND is GiB; collector_gb makes both decimal GB.
+        _host_gb = _k_collector_gb("host_written_gb", _delta("l35_host_written_gb"))
+        _nand_gb = _k_collector_gb("nand_written_gb", _delta("l35_nand_written_gb"))
         _waf_v = [x for x in (_l35s.get("l35_waf") or []) if x == x and x > 0]
         _waf = (_nand_gb / _host_gb) if _host_gb > 0 else (
             _waf_v[-1] if _waf_v else 0.0)
@@ -13467,7 +13715,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                     "unreconciled",
                     (f"host writes {_host_gb:,.1f} GB against logical KV "
                      f"{_logical_gb:,.1f} GB ({_bk_tok:,.0f} tokens backed up "
-                     f"\u00d7 {kv_bytes_tok_kb:,.0f} KB/token) \u2014 "
+                     f"× {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):,.0f} KB/token) \u2014 "
                      f"{_logical_gb / max(_host_gb, 1e-9):,.0f}\u00d7 apart. "
                      f"Amplification is host bytes per logical byte offloaded, "
                      f"so it cannot be below 1 unless the engine is persisting "
@@ -13568,140 +13816,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             _lbl, f"{_u:,.1f} / {_c:,.0f} GB" if _c > 0 else f"{_u:,.1f} GB",
             _note + _pct)
 
-    # ---- KV cache generated during the run ---------------------------------
-    #
-    # "Generated" means KV that the GPUs actually COMPUTED. A prefill token
-    # served from the prefix cache did not generate KV -- it reused KV that
-    # already existed -- so counting all prompt tokens would overstate this by
-    # whatever the hit rate is, which on these runs is ~95%: a 20x error.
-    #
-    #   generated tokens = (prompt - cached) + decode
-    #                    = recomputed prefill + every output token
-    #
-    # Both terms are measured counters. The byte figure needs KV bytes per
-    # token, which comes from the shared resolver and is exact only when a
-    # model config was supplied; when it cannot be resolved the tile reports
-    # tokens and says the byte figure is unavailable rather than publishing a
-    # default dressed as a measurement.
-    _kvg_prompt = _safe_float(_tok_den, 0.0)
-    _kvg_cached = _safe_float(_tok_num, 0.0)
-    # _tok_num matches on 'cached_tokens_total'.  An engine that exports only
-    # realtime_tokens_total{mode="prefill_cache"} -- which is the column the
-    # comparator reads, and the one this report's own cache-hit formula is
-    # defined on -- does not match that substring, so cached came back 0 while
-    # prompt resolved fine.  (prompt - 0) + decode then reports the ENTIRE
-    # prompt as newly computed KV: at a 98.8% hit rate that is 83x high, and
-    # the only sign is a "- 0 cached" buried in the note.
-    # The realtime phase counters, resolved the way the phase-throughput
-    # chart resolves them: _amoprof_read_columns_substr requires BOTH
-    # substrings in the column name, so it matches whichever form the label
-    # expansion produced -- [mode=decode], {mode="decode"}, or anything else
-    # carrying both tokens.  A hand-written list of candidate names was the
-    # first attempt here, and it was guesswork: this is the function that
-    # already found these columns on the run in question, which is why its
-    # output-token chart carried "fallback (generation_tokens_total absent)"
-    # while this tile reported the totals missing.
-    _kvg_phase: dict = {}
-    try:
-        _kvg_sg_path = _first_existing(raw_dir, ["sglang_timeseries.csv"])
-        if _kvg_sg_path:
-            # EVERY matching column, not the first: see
-            # _amoprof_read_series_substr. A counter fanned out per rank is
-            # only whole when its series are summed, and the End report has
-            # summed them all along, so taking one here was a divergence
-            # waiting on a deployment that fans these out.
-            _kvg_phase = _amoprof_read_series_substr(_kvg_sg_path, {
-                "prefill_compute": ["realtime_tokens_total",
-                                    "mode=prefill_compute"],
-                "prefill_cache":   ["realtime_tokens_total",
-                                    "mode=prefill_cache"],
-                "decode":          ["realtime_tokens_total", "mode=decode"],
-            }) or {}
-    except Exception:
-        _kvg_phase = {}
-
-    def _kvg_counter_delta(_key) -> float:
-        """Window total of a cumulative counter, by the shared kernel.
-
-        The sum of positive per-step differences per column, then summed
-        across columns -- reset-safe inside the window, and equal to
-        last - first on a clean monotonic series. The arithmetic lives in
-        metric_kernels.counter_window_total so that this tile, the End
-        report's _delta_sum_metric and the comparison's _kv_delta cannot
-        drift apart again.
-        """
-        return float(_k_counter_total(_kvg_phase.get(_key) or [])["total"])
-
-    if _kvg_cached <= 0:
-        _kvg_cached = _kvg_counter_delta("prefill_cache")
-    _kvg_decode = _ts_delta(sglang_ts, "generation_tokens_total",
-                            "sglang_generation_tokens_total")
-
-    # Some deployments export realtime_tokens_total{mode=...} and NOT the
-    # prompt_tokens_total / generation_tokens_total counters.  On one such run
-    # this tile read "not collected" while the report's own cache-hit tile was
-    # computing a percentage from Δrealtime_tokens_total{mode="prefill_cache"}
-    # and {mode="prefill_compute"} two tiles above it, and its output-token
-    # chart was reading {mode="decode"} with the footnote "fallback
-    # (generation_tokens_total absent)".  Every input existed; only this tile
-    # did not look for them.
-    #
-    #   prompt = prefill_cache + prefill_compute   (the cache-hit denominator)
-    #   decode = decode mode
-    _kvg_prompt_src = ""
-    if _kvg_prompt <= 0:
-        _pc = _kvg_counter_delta("prefill_compute")
-        if _pc > 0 and _kvg_cached > 0:
-            _kvg_prompt = _kvg_cached + _pc
-            _kvg_prompt_src = (
-                f"prompt derived as Δrealtime_tokens_total"
-                f"{{mode=prefill_cache}} + {{mode=prefill_compute}} "
-                f"({_kvg_cached:,.0f} + {_pc:,.0f}) — "
-                f"sglang_prompt_tokens_total is not exported here")
-        elif _pc > 0:
-            # Compute alone IS the recomputed prefill, which is the term this
-            # tile actually needs; no cached figure is required for it.
-            _kvg_prompt = _pc
-            _kvg_cached = 0.0
-            _kvg_prompt_src = (
-                f"recomputed prefill taken directly from "
-                f"Δrealtime_tokens_total{{mode=prefill_compute}} "
-                f"({_pc:,.0f}) — neither prompt_tokens_total nor a cached "
-                f"total is exported here")
-    _kvg_decode_src = ""
-    if _kvg_decode <= 0:
-        _v_d = _kvg_counter_delta("decode")
-        if _v_d > 0:
-            _kvg_decode = _v_d
-            _kvg_decode_src = (
-                f"decode from Δrealtime_tokens_total{{mode=decode}} "
-                f"({_v_d:,.0f}) — sglang_generation_tokens_total is not "
-                f"exported here")
-    _kvg_recomp = max(0.0, _kvg_prompt - _kvg_cached)
-    _kvg_new_tok = _kvg_recomp + _kvg_decode
-    # What the run would have had to compute with no cache at all. The ratio
-    # of the two is what the hierarchy actually bought.
-    _kvg_demand_tok = _kvg_prompt + _kvg_decode
-    _kvg_kb = _safe_float(kv_bytes_tok_kb, 0.0)
+    _kvg_kb = _safe_float(kv_bytes_tok_kb, 0.0)       # KiB per token (bytes / 1024)
+    _kvg_bpt = _kvg_kb * 1024.0                          # bytes per token
     _kvg_tp = max(_safe_float(tp_size, 1.0), 1.0)
     _kvg_src = str((_kv_resolution or {}).get("source") or "")
     _kvg_exact = bool((_kv_resolution or {}).get("exact"))
 
     _kvg_tile = ""
     if _kvg_new_tok > 0 and _kvg_kb > 0:
-        _kvg_gb = _kvg_new_tok * _kvg_kb / (1024 * 1024)
+        _kvg_gb = _k_gb_from_bytes(_kvg_new_tok * _kvg_bpt)
         _kvg_rank_gb = _kvg_gb / _kvg_tp
-        _kvg_avoided_gb = (_kvg_demand_tok - _kvg_new_tok) * _kvg_kb / (1024 * 1024)
+        _kvg_avoided_gb = _k_gb_from_bytes(max(0.0, _kvg_demand_tok - _kvg_new_tok) * _kvg_bpt)
         _kvg_note = (
             f"({_kvg_prompt:,.0f} prompt − {_kvg_cached:,.0f} cached) + "
             f"{_kvg_decode:,.0f} decode = {_kvg_new_tok:,.0f} tokens of KV "
-            f"actually computed, × {_kvg_kb:,.0f} KB/token "
+            f"actually computed, × {_k_kb_from_bytes(_kvg_bpt):,.0f} KB/token "
             f"({_kvg_src or 'source not recorded'}"
             f"{'' if _kvg_exact else ', ESTIMATED from the model name'}). "
             f"Full-model across all ranks; per rank at TP={_kvg_tp:g} it is "
             f"{_kvg_rank_gb:,.1f} GB. A prefill token served from cache "
             f"generates no KV, so cache hits are excluded — with none, this "
-            f"run would have computed {_kvg_demand_tok * _kvg_kb / (1024*1024):,.1f} GB, "
+            f"run would have computed {_k_gb_from_bytes(_kvg_demand_tok * _kvg_bpt):,.1f} GB, "
             f"so the hierarchy avoided {_kvg_avoided_gb:,.1f} GB.")
         # Two checks, because a byte figure derived from an architecture is
         # only as good as its agreement with what the hardware recorded.
@@ -13726,14 +13861,14 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                                                "write_GB_total"], 0.0))
         if _kvg_meas_wr == 0.0:
             _kvg_meas_wr = _safe_float(
-                _pick(blk, ["write_bytes_total"], 0.0)) / (1024 ** 3)
+                _pick(blk, ["write_bytes_total"], 0.0)) / 1e9
         if _kvg_backup > 0 and _kvg_meas_wr > 0:
-            _kvg_impl_gb = _kvg_backup * _kvg_kb / (1024 * 1024)
+            _kvg_impl_gb = _k_gb_from_bytes(_kvg_backup * _kvg_bpt)
             _kvg_ratio = _kvg_impl_gb / _kvg_meas_wr
             _kvg_ratio_rank = _kvg_ratio / _kvg_tp
             if _kvg_ratio > 2.0 or _kvg_ratio < 0.5:
                 _kvg_note += (
-                    f" <b>Not reconciled with the device:</b> {_kvg_kb:,.0f} "
+                    f" <b>Not reconciled with the device:</b> {_k_kb_from_bytes(_kvg_bpt):,.0f} "
                     f"KB/token implies {_kvg_impl_gb:,.0f} GB for the "
                     f"{_kvg_backup:,.0f} tokens backed up, but the drive "
                     f"recorded {_kvg_meas_wr:,.1f} GB written — "
@@ -13959,12 +14094,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
              ("Needs sglang_gen_throughput or Δgeneration_tokens_total for "
               "decode, and Δprompt_tokens_total ÷ Δtime for prefill. Neither "
               "resolved in this window."))) +
+        # Headline is the mean over every sample, as the tile's formula says.
+        # The busy-only mean (samples > threshold) read 99.4% on a run whose
+        # GPUs sat idle 80% of the time; it stays in the note, labelled.
         kpi_card("GPU util",
-                 _fmt_num(_gpu_active_mean_dec or _gpu_overall_mean or gpu_util, "%", 1),
+                 _fmt_num(_gpu_overall_mean or gpu_util or _gpu_active_mean_dec, "%", 1),
                  (f"overall {_fmt_num(_gpu_overall_mean, '%', 1)} · "
-                  f"active {_fmt_num(_gpu_active_mean_dec, '%', 1)} "
+                  f"busy {_fmt_num(_gpu_active_mean_dec, '%', 1)} when active "
                   f"(>{_gpu_active_threshold:g}%) · "
-                  f"idle {_fmt_num(_gpu_idle_fraction, '%', 1)} · "
+                  f"idle {_fmt_num(_gpu_idle_fraction, '%', 1)} of samples · "
                   f"{_fmt_num(gpu_peak, '% peak', 0)}")) +
         kpi_card("L1 HBM used — raw (all GPUs)",
                  (f"{_fmt_num(hbm_used_total_gb, ' GB', 1)} / "
@@ -14005,9 +14143,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         # this tile, because a bare assignment cannot sit inside the outer
         # kpi_html expression chain.
         (kpi_card(("Physical L3 (local storage) block R / W total"),
-                 (f"{read_gb*1024:.1f} MB" if 0 < read_gb < 1 else _fmt_num(read_gb, ' GB', 1))
+                 (f"{read_gb*1000:.1f} MB" if 0 < read_gb < 1 else _fmt_num(read_gb, ' GB', 1))
                  + " / "
-                 + (f"{write_gb*1024:.1f} MB" if 0 < write_gb < 1 else _fmt_num(write_gb, ' GB', 1)),
+                 + (f"{write_gb*1000:.1f} MB" if 0 < write_gb < 1 else _fmt_num(write_gb, ' GB', 1)),
                  # Tile note now reflects the actual data source so the reader
                  # never confuses an estimate with a direct measurement, and
                  # never sees an "estimated" label when nothing was actually
@@ -14015,27 +14153,27 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                  ("blktrace / iostat" if l3_traffic_source == "blktrace"
                   else "blktrace + SGLang logical L3 estimate"
                        if l3_traffic_source == "blktrace_plus_sglang_logical_local_ssd"
-                       else f"estimated · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok"
+                       else f"estimated · SGLang counters × {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f} KB/tok"
                        if l3_traffic_source == "sglang_logical_local_ssd"
                        else "physical L3 local block telemetry; logical L3 movement shown separately"
                        if l3_unmapped_logical_seen
-                       else f"logical · SGLang counters × {kv_bytes_tok_kb:.0f} KB/tok; physical block separate"
+                       else f"logical · SGLang counters × {_k_kb_from_bytes(kv_bytes_tok_kb * 1024):.0f} KB/tok; physical block separate"
                        if l3_traffic_source in ("sglang_logical_remote_l35", "sglang_logical_hicache_unknown_backend")
                        else "no L3 data — see findings below"),
                  # With blktrace unrepresentative, the budget is compared with
                  # what the device itself wrote, and the tile says so.
                  target=((f"blktrace captured {blktrace_coverage*100:.1f}% of device bytes · "
-                          f"device wrote {_fmt_num(nvme_wr_bw * _l3_window_s / 1024.0, ' GB', 0)}"
+                          f"device wrote {_fmt_num(nvme_wr_bw * _l3_window_s / 1000.0, ' GB', 0)}"
                           + (f" vs an endurance budget of "
-                             f"{ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
+                             f"{ssd_lifetime_writes_tb_per_run*1000:.0f} GB/run"
                              if ssd_lifetime_writes_tb_per_run > 0 else ""))
                          if (blktrace_unrepresentative and nvme_wr_bw_measured) else
-                         f"Endurance budget: {ssd_lifetime_writes_tb_per_run*1024:.0f} GB/run"
+                         f"Endurance budget: {ssd_lifetime_writes_tb_per_run*1000:.0f} GB/run"
                           if ssd_lifetime_writes_tb_per_run > 0 else ""),
-                 target_pct=((((nvme_wr_bw * _l3_window_s / 1024.0)
+                 target_pct=((((nvme_wr_bw * _l3_window_s / 1000.0)
                                if (blktrace_unrepresentative and nvme_wr_bw_measured)
                                else write_gb)
-                              / (ssd_lifetime_writes_tb_per_run * 1024) * 100)
+                              / (ssd_lifetime_writes_tb_per_run * 1000) * 100)
                               if ssd_lifetime_writes_tb_per_run > 0 else None),
                  target_tip=(f"Endurance budget = rated TBW ({rated_tbw_tb:.1f} TB) spread "
                              f"over a 5-year warranty, scaled to this run's duration "
@@ -15343,7 +15481,7 @@ def build_combined_report(
 
     if static_html_path and Path(static_html_path).exists():
         static_html = Path(static_html_path).read_text(encoding='utf-8', errors='replace')
-        log.info("combined: loaded static report from %s (%d KB)", static_html_path, len(static_html) // 1024)
+        log.info("combined: loaded static report from %s (%d KB)", static_html_path, len(static_html) // 1000)
     else:
         import sys, subprocess
         tmp = out_html.parent / "_tmp_static.html"
@@ -15369,11 +15507,11 @@ def build_combined_report(
         static_html = tmp.read_text(encoding='utf-8', errors='replace')
         try: tmp.unlink()
         except OSError: pass
-        log.info("combined: generated static report (%d KB)", len(static_html) // 1024)
+        log.info("combined: generated static report (%d KB)", len(static_html) // 1000)
 
     if interactive_html_path and Path(interactive_html_path).exists():
         interactive_html = Path(interactive_html_path).read_text(encoding='utf-8', errors='replace')
-        log.info("combined: loaded interactive report from %s (%d KB)", interactive_html_path, len(interactive_html) // 1024)
+        log.info("combined: loaded interactive report from %s (%d KB)", interactive_html_path, len(interactive_html) // 1000)
     else:
         from .interactive import build_report as _build_int
         tmp = out_html.parent / "_tmp_interactive.html"
@@ -15381,7 +15519,7 @@ def build_combined_report(
         interactive_html = tmp.read_text(encoding='utf-8', errors='replace')
         try: tmp.unlink()
         except OSError: pass
-        log.info("combined: generated interactive report (%d KB)", len(interactive_html) // 1024)
+        log.info("combined: generated interactive report (%d KB)", len(interactive_html) // 1000)
 
     try:
         common_kpis = compute_common_kpis(raw_dir)
@@ -15417,7 +15555,7 @@ def build_combined_report(
         interactive_html = _canonical_kpi_tile_order_html(interactive_html)
         static_html = _canonical_kpi_tile_order_html(static_html)
         executive_html = _amoprof_storage_label_cleanup(executive_html, l3_backend_class)
-        log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1024)
+        log.info("combined: generated executive summary (%d KB)", len(executive_html) // 1000)
     except Exception as e:
         log.warning("combined: executive summary generation failed: %s", e)
         executive_html = "<html><body><h1>Executive Summary unavailable</h1><p>See Interactive and Static tabs.</p></body></html>"
@@ -15436,5 +15574,5 @@ def build_combined_report(
     # reports handle zero/no-data L3 sections before embedding.
     combined = _amoprof_storage_label_cleanup(combined, l3_backend_class)
     out_html.write_text(combined, encoding='utf-8')
-    log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1024)
+    log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1000)
     return out_html

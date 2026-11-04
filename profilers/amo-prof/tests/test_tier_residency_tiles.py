@@ -180,7 +180,7 @@ def main() -> int:
                f"{round(_want_l3 / 1e3):.0f}K" in tl["L3 KV utilization"][1],
                True)
         _check("the raw tile still shows the whole filesystem",
-               tl["L3 cache used — raw (df snapshot)"][0], "400 / 1000 GB")
+               tl["L3 cache used — raw (df snapshot)"][0], "429 / 1074 GB")  # df fields are GiB
         _check("so the pair is not the same number twice",
                tl["L3 KV utilization"][0]
                != tl["L3 cache used — raw (df snapshot)"][0], True)
@@ -232,7 +232,7 @@ def main() -> int:
         _check("and saying L2 KV residency does not depend on it",
                "L2 KV residency is unaffected" in _dn, True)
         _check("while a run WITH DRAM data shows the figure, not the notice",
-               tl["L2 host DRAM used — raw (physical)"][0], "48.5 GB / 1,008 GB")
+               tl["L2 host DRAM used — raw (physical)"][0], "52.1 GB / 1,082 GB")  # /proc/meminfo GiB
         _check("the L2 residency tile also renders without a capacity",
                "L2 KV residency (est.)" in _tl5, True)
         _check("as not collected", _tl5["L2 KV residency (est.)"][0],

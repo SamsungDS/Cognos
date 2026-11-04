@@ -111,8 +111,10 @@ def main() -> int:
         _check("the device file was written", len(r) > 1, True)
         _check("IOPS are dgx1's 1,000, not the three-host average 10,000",
                float(r[0]["rd_iops"]), 1000.0)
-        _check("bandwidth is dgx1's sysfs 300 MB/s",
-               float(r[0]["rd_bw_mbs"]), 300.0)
+        # The collector's sysfs gauge is MiB/s (sectors x 512 / 2**20); the
+        # timeseries carries decimal MB/s, so 300 MiB/s reads 314.5728.
+        _check("bandwidth is dgx1's sysfs 300 MiB/s, in decimal MB/s",
+               round(float(r[0]["rd_bw_mbs"]), 4), round(300 * MIB / 1e6, 4))
         _d_bytes = float(r[1]["rd_bytes"]) - float(r[0]["rd_bytes"])
         _check("bytes come from the busy HiCache device nvme6n1 (300 MiB/s)",
                round(_d_bytes / 60.0 / MIB), 300)

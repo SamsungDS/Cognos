@@ -10,6 +10,7 @@
 | `ci/compat-check.sh` | proposes a major or minor release (buf, abidiff) | no |
 | `gitlab/scripts/api.py` | the GitLab API calls: job results, release branches, tags, merge requests, backports, release upload | yes |
 | `gitlab/scripts/tests/` | tests of all of the above: `run.sh` (file modes, shellcheck, unit tests) and `smoke.sh` | the smoke tests only |
+| `deploy/scripts/test-deploy.sh` | deploys the stack to two hosts with the playbooks, checks it, removes it and checks that nothing is left | no |
 | `deploy/scripts/fetch-packages.py` | puts the packages of a release, a dev set, a pipeline or a local build into `deploy/artifacts/SVK/` | uses the GitLab API to download |
 
 One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has seven sections: includes and workflow, what a
@@ -51,6 +52,7 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | test amo-prof | test | builds the amo-prof wheel and runs its tests |
 | publish dev set | publish | every `main` push, schedule and web run ([Dev sets](#dev-sets)) |
 | propose release, create release, tag patch, backport, publish release | release, publish | see [Releases](#releases) |
+| deploy cognos | deploy | by hand on a `main` pipeline ([Deploy to the lab](#deploy-to-the-lab)) |
 | sync components | release | nightly schedule or by hand, with `SYNC_COMPONENTS=true` ([Sync](#sync)) |
 | test ci | test | the tests of the CI scripts ([Tests of the CI scripts](#tests-of-the-ci-scripts)) |
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
@@ -229,6 +231,37 @@ It runs only when `SYNC_COMPONENTS` is `true`, on `main`:
 | Stop the nightly pipeline | make the schedule inactive |
 
 The sync uses `RELEASE_BOT_TOKEN`: its merge requests and merge commits are made by that token's user.
+
+## Deploy to the lab
+
+"deploy cognos" (▶ on a `main` pipeline) deploys the whole stack with the playbooks and takes it down again:
+
+| Host | Group | What it runs |
+|---|---|---|
+| `DEPLOY_MANAGEMENT_SERVER`, default `msl-ssg-vm22.msl.lab` | `management_server` | controller, REST server (port 8001), node |
+| `DEPLOY_APPLICATION_SERVER`, default `msl-ssg-srf06.msl.lab` | `application_server` | node, svc-mgr, cmmh driver, the real cxl (srf06 has CXL devices) |
+
+`deploy/scripts/test-deploy.sh` does the work:
+
+1. Records each host's state: packages, systemd units, Cognos folders, users, `ld.so.conf.d`, ufw.
+2. Deploys this pipeline's ubuntu24 packages (`fetch-packages.py --pipeline`, completed from the newest dev set) with
+   `playbooks/deploy_cognos.yml`, without the GUI and RBAC. The playbook removes any earlier Cognos first.
+3. Checks that the services run on both hosts and that the REST API answers. The start roles do not fail when a
+   service does not start, so this check is what tells.
+4. Always, also when 2 or 3 failed: `playbooks/remove_cognos.yml`, then purges every package the deployment added and
+   what ansible left behind.
+5. Compares with step 1. Anything the deployment added that is still there fails the job; anything that was there before
+   and is gone is only reported.
+
+The job logs in as root with `DEPLOY_SSH_KEY` (a protected, masked and hidden variable: the base64 of an ed25519 key
+whose public half is in root's `authorized_keys` on both hosts). Because the variable is protected, the job is offered on
+`main` pipelines only. Only one deployment runs at a time (`resource_group: lab-deploy`). Cancelling the job can stop
+the cleanup; the next run removes any Cognos it finds first, and its leftover check reports the rest. OS logs (the
+journal, apt's history) keep a record of the run.
+
+To run it by hand from a checkout: put the packages in `deploy/artifacts/SVK/` with `fetch-packages.py`, then
+`deploy/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key>` (`--mock` for an
+application server without CXL devices).
 
 ## Tests of the CI scripts
 

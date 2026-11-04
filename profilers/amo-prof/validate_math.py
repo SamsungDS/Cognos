@@ -425,11 +425,12 @@ try:
     # figure is zero and the tier was listed bare.
     import re as _re8
     _m8 = _re8.search(r"Inference Cache Tier</b>:\s*([^<]{0,200})", _u8)
-    # Unit-agnostic: the fixture's store is 2 TB, so the figure reads
-    # "TB DRAM" rather than "GB DRAM".  Assert the capacity is present and
-    # names its medium, not a particular unit.
+    # Unit-agnostic.  The layer names its medium before the figure
+    # ("L3.5 (memory: 2,000 GB ..." or "L3.5 (DRAM: x GB + CXL: y GB ...").
+    # Assert the capacity is present and names its medium.
     check("remote tier summary carries a capacity",
-          bool(_m8 and _re8.search(r"\d[\d.,]*\s*(?:GB|TB) DRAM", _m8.group(1))),
+          bool(_m8 and _re8.search(r"L3\.5 \((?:DRAM|CXL|memory): \d[\d.,]*\s*(?:GB|TB)",
+                                   _m8.group(1))),
           True)
 except Exception as _e:
     check("residency probe ran", f"FAILED: {_e}", "ok")
@@ -2314,23 +2315,24 @@ from amoprof.report.combined import (_amoprof_exec_svg_queue_pctl as _qpct,
 import re as _re_k
 
 # ── L2 capacity: a MEASURED gauge outranks a configured assumption.
-# The reported run: hicache_host_total_tokens = 251,421 at 560 KB/token is
-# 134.3 GB, while setup_details implied 2 GB/GPU x 8 = 16 GB. Ranking the
+# The reported run: hicache_host_total_tokens = 251,421 at 560 KiB/token is
+# 144.2 GB (134.3 GiB, which the report used to print as "GB"), while
+# setup_details implied 2 GB/GPU x 8 = 16 GB. Ranking the
 # assumption first gave a 16 GB denominator, the used figure was then divided
 # by TP=8 to fit it, and the tile still read "103% full" -- next to a
 # tier-residency chart reading 134.3 GB from the same gauge.
 _l2 = _rl2(hicache_used_tokens=251421, hicache_total_tokens=251421,
            kv_bytes_per_token_kb=560, hicache_total_gb=16.0)
 check("L2 capacity comes from the server's own token gauge",
-      round(_l2["capacity_gb"], 1), 134.3)
+      round(_l2["capacity_gb"], 1), 144.2)
 check("L2 used matches the tier-residency chart",
-      round(_l2["used_gb"], 1), 134.3)
+      round(_l2["used_gb"], 1), 144.2)
 check("fill is 100%, not an impossible 103%",
       round(_l2["fill_pct"], 1), 100.0)
 check("the capacity source says it is measured",
       "measured" in _l2["capacity_source"], True)
 check("the disagreement with the configured figure is named",
-      "8.4x apart" in _l2["capacity_conflict"], True)
+      "9.0x apart" in _l2["capacity_conflict"], True)
 check("nothing is clamped once the denominator is right",
       round(_l2["over_capacity_pct"], 2), 0.0)
 # Without a gauge, the configured allocation is still used.
@@ -2348,18 +2350,18 @@ check("agreeing sources raise no conflict", _l2c["capacity_conflict"], "")
 # parsed --hicache-size. SGLang sizes the host cache from the ratio whenever
 # --hicache-size is 0 (the default), and on the reference run the ratio path
 # reproduces the server's gauge to one token while a `hicache_size` field
-# worth 2, times 8 GPUs, is 8.4x out.
+# worth 2, times 8 GPUs, is 9.0x out.
 check("ratio x KV pool reproduces the measured gauge to one token",
       round(209517 * 1.2), 251420)
 _l2r = _rl2(hicache_used_tokens=251421, hicache_total_tokens=0,
             kv_bytes_per_token_kb=560, hicache_total_gb=16.0,
             hicache_ratio=1.2, kv_pool_tokens=209517)
 check("without a gauge the ratio beats the parsed size",
-      round(_l2r["capacity_gb"], 1), 134.3)
+      round(_l2r["capacity_gb"], 1), 144.2)
 check("the ratio-derived source names its inputs",
       "--hicache-ratio 1.2" in _l2r["capacity_source"], True)
 check("the size-vs-ratio disagreement is named",
-      "8.4x apart" in _l2r["capacity_conflict"], True)
+      "9.0x apart" in _l2r["capacity_conflict"], True)
 # With neither gauge nor ratio, a configured size is still honoured.
 _l2s = _rl2(hicache_used_tokens=29959, hicache_total_tokens=0,
             kv_bytes_per_token_kb=560, hicache_total_gb=16.0)

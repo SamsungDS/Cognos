@@ -172,6 +172,32 @@ def validate_html(html: str, label: str) -> Result:
             if b > 0:
                 r.check(a <= b * 1.02, f"TILES '{lab}' used <= capacity", f"{a} / {b}")
 
+    # Sizes are decimal SI throughout (1 GB = 1e9 bytes), so no tile shows a
+    # binary unit, and the KV volume generated in the run reads the same on
+    # the KPI and in the L3.5 finding (8,688.1 "GB" there was GiB; 9,367 GB here).
+    _bin = sorted({lab for lab, val, _ in tiles if re.search(r"\b[KMGT]iB\b", val)})
+    r.check(not _bin, "TILES sizes use decimal units (no GiB/MiB/KiB)", ", ".join(_bin[:5]))
+    _kvg = next((_num(v) for l, v, _ in tiles if l.strip().lower() == "kv cache generated this run"
+                 and "GB" in v), None)
+    _fnd = re.search(r"KV generated in the run = .{0,200}?\(≈ ([\d.,]+) GB at", _text(unesc))
+    if _kvg is not None and _fnd:
+        _fv = float(_fnd.group(1).replace(",", ""))
+        r.check(abs(_kvg - _fv) <= max(0.1, 0.0005 * _fv),
+                "TILES KV generated agrees with the L3.5 finding",
+                f"KPI {_kvg:,.1f} GB vs finding {_fv:,.1f} GB")
+
+    # The GPU util headline is the overall mean its formula describes, not the
+    # busy-only mean: that one read 99.4% for GPUs idle 80% of the window.
+    for lab, val, note in tiles:
+        if lab.strip().lower() != "gpu util":
+            continue
+        shown = _num(val)
+        m_ov = re.search(r"overall\s+([\d.]+)\s*%", note)
+        if shown is not None and m_ov:
+            r.check(abs(shown - float(m_ov.group(1))) < 0.15,
+                    "TILES 'GPU util' headline is the overall mean",
+                    f"headline {shown} vs overall {m_ov.group(1)} in its note")
+
     # Compare the HBM tile's own capacity against the per-GPU capacity and GPU
     # count stated in that same tile's note — matching "N GB/GPU" anywhere in
     # the document picks up per-GPU *usage* figures from unrelated charts.
@@ -216,6 +242,41 @@ def validate_html(html: str, label: str) -> Result:
                     if p.count("<circle") + p.count("<rect") <= 2 and "<polyline" not in p)
         r.check(empty == 0, "CHARTS no chart drawn with no data",
                 f"{empty}/{len(panels)} empty")
+
+    # Per-request distribution charts: the completion-based ones count the
+    # same requests, so their n must match; TTFT counts first tokens and may
+    # differ by requests in flight at the window edges, which must be said.
+    _ns = {}
+    for m_t in re.finditer(r'font-weight="800">([^<]{3,60}?) — p50 / p90 / p99</text>', unesc):
+        m_n = re.search(r"n=([\d,]+) ([a-z][^<]{2,60})</text>", unesc[m_t.end():m_t.end() + 8000])
+        if m_n:
+            _ns[m_t.group(1).strip()] = (int(m_n.group(1).replace(",", "")), m_n.group(2))
+    _done = {k: v for k, v in _ns.items()
+             if k in ("E2E request latency", "Input tokens / request", "Output tokens / request")}
+    if len(_done) >= 2:
+        r.check(len({n for n, _ in _done.values()}) == 1,
+                "CHARTS completion-based request charts report the same n",
+                ", ".join(f"{k} n={n}" for k, (n, _) in _done.items()))
+    if "TTFT" in _ns and _done:
+        n_ttft, n_done = _ns["TTFT"][0], next(iter(_done.values()))[0]
+        r.check(n_ttft == n_done or "Why the n counts differ" in unesc,
+                "CHARTS TTFT vs completed-request n difference is explained",
+                f"TTFT n={n_ttft} vs completed n={n_done}, no explanation")
+        r.check(all(lbl != "observations" for _, lbl in _ns.values()),
+                "CHARTS distribution n says what it counts",
+                ", ".join(f"{k}: {lbl}" for k, (_, lbl) in _ns.items() if lbl == "observations"))
+
+    # The Inference Cache Tier line names every KV layer with its memory type
+    # ("L1 (HBM: x GB) + ... + L3.5 (DRAM: a GB + CXL: b GB + ...)"), so a
+    # report can be tied to its configuration from the header alone.
+    m_tier = re.search(r"Inference Cache Tier</b>:\s*([^<]+)", unesc)
+    if m_tier and m_tier.group(1).strip().startswith("Enabled"):
+        _line = m_tier.group(1)
+        _layers = re.findall(r"(?:^|[·+]\s)(L(?:3\.5|1|2|3))\b", _line)
+        _typed = re.findall(r"(?:^|[·+]\s)L(?:3\.5|1|2|3) \((?:HBM|DRAM|NVMe SSD|CXL|memory)", _line)
+        r.check(bool(_layers) and "L1" in _layers and len(_typed) == len(_layers),
+                "LAYOUT Inference Cache Tier names each layer's memory type",
+                _line.strip()[:160])
 
     # HBM composition is a partition of the device: its bands must add up to
     # the capacity in the chart header.  KV in use was once counted twice,

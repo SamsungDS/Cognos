@@ -3,8 +3,8 @@ import pytest
 
 from amoprof.report.metric_kernels import resolve_hbm_breakdown
 
-KV_KB = 960.0
-GB_PER_TOKEN = KV_KB / 1024 / 1024
+KV_KB = 960.0                         # KiB per token, as the resolver returns it
+GB_PER_TOKEN = KV_KB * 1024 / 1e9     # decimal GB, the report's unit
 
 
 def _bands(b):

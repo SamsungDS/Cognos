@@ -39,7 +39,10 @@ def test_cycles_fold_with_per_key_semantics():
     assert out["collection_duration_s"] == 120
     assert out["ssd_media_errors"] == 8             # lifetime counter: last
     assert out["temp_start_c"] == 40 and out["temp_end_c"] == 50
-    assert out["waf"] == pytest.approx(6.0 / 4.0)   # sum(nand)/sum(host), not mean of ratios
+    # sum(nand)/sum(host), not a mean of ratios, and both in decimal GB first:
+    # nand_written_gb is GiB, host_written_gb carries the collectors' 512x1024
+    # data-unit factor (true unit is 512,000 bytes).
+    assert out["waf"] == pytest.approx((6.0 * 2 ** 30 / 1e9) / (4.0 * 2 ** 20 / 1e6), abs=1e-3)
     assert out["power_efficiency_tok_per_wh"] == pytest.approx(100 * 1 / 4)  # sum(tok)/sum(Wh)
     assert meta["_approximate_keys"] == "lat_p99"
     assert "energy_wh" not in out                   # only seen in the excluded cycle

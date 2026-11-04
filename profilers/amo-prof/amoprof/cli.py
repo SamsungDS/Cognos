@@ -1572,6 +1572,11 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
         blkparse_csv.exists()
         and blkparse_csv.stat().st_size > max_raw_mb * 1024 * 1024
     )
+    try:
+        _bt_summary = json.loads((raw_dir / "blktrace_summary.json").read_text())
+        _bt_summary = _bt_summary if isinstance(_bt_summary, dict) else {}
+    except Exception:
+        _bt_summary = {}
     if csv_has_data and not blkparse_raw_too_large:
         cmd.extend(["--blktrace", str(blkparse_csv)])
     elif csv_has_data and blkparse_raw_too_large:
@@ -1579,6 +1584,10 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
                  "and using pre-aggregated blktrace analysis files instead "
                  "(override with AMOPROF_MAX_RAW_BLKTRACE_CSV_MB).",
                  blkparse_csv.stat().st_size // (1024 * 1024))
+    elif (blktrace_bin_dir.exists() and any(blktrace_bin_dir.glob("trace.blktrace.*"))
+          and _bt_summary.get("blktrace_empty_reason")):
+        # The collector already found the trace empty; re-parsing cannot help.
+        log.info("blktrace trace holds no events: %s", _bt_summary.get("blktrace_reason", ""))
     elif blktrace_bin_dir.exists() and any(blktrace_bin_dir.glob("trace.blktrace.*")):
         # Either no CSV, or CSV is header-only. Re-parse from binaries.
         if blkparse_csv.exists():
@@ -1586,9 +1595,12 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
                         "re-parsing from %d binary file(s)",
                         len(list(blktrace_bin_dir.glob("trace.blktrace.*"))))
         try:
-            generated = _blkparse_to_csv(blktrace_bin_dir, blkparse_csv)
+            _bp_status: dict = {}
+            generated = _blkparse_to_csv(blktrace_bin_dir, blkparse_csv, status=_bp_status)
             if generated and generated.exists() and generated.stat().st_size > 0:
                 cmd.extend(["--blktrace", str(generated)])
+            elif _bp_status.get("empty"):
+                pass  # already reported as a warning
             else:
                 log.error("blkparse re-parse failed — see errors above. "
                           "Manual fix: blkparse -i %s/trace > /tmp/events.txt 2>&1 | head",
@@ -1669,14 +1681,20 @@ def _run_amoprof(raw_dir: Path, output_html: Path,
 
 
 def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
-                     blkparse_bin: str = "blkparse") -> Path | None:
+                     blkparse_bin: str = "blkparse",
+                     status: dict | None = None) -> Path | None:
     """Re-parse a directory of `trace.blktrace.N` binaries into amoprof CSV format.
 
     Captures stderr and rc to surface silent failures. Logs the actual
     command + an unmatched-line sample if the regex misses, so the user
-    knows what to fix.
+    knows what to fix.  `status["empty"]` is set when blkparse itself counted
+    no events, which is reported as a warning rather than a parse failure.
     """
     import subprocess as _sp
+    from .blockdev import allocated_bytes
+    from .collectors.blktrace import blkparse_reported_entries, is_blkparse_summary_line
+    if status is None:
+        status = {}
     bins = sorted(bin_dir.glob("trace.blktrace.*"))
     if not bins:
         log.warning("_blkparse_to_csv: no trace.blktrace.* files in %s", bin_dir)
@@ -1688,8 +1706,9 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
     cmd = [blkparse_bin, "-i", str(prefix)]
     log.info("_blkparse_to_csv: parsing %d binaries (%d MB total) with: %s",
              len(bins),
-             sum(p.stat().st_size for p in bins) // (1024*1024),
+             allocated_bytes(bins) // (1024*1024),
              " ".join(cmd))
+    reported_entries = None
     line_re = re.compile(
         r"^\s*(?P<major>\d+),(?P<minor>\d+)\s+(?P<cpu>\d+)\s+\d+\s+"
         r"(?P<ts>[\d.]+)\s+(?P<pid>\d+)\s+"
@@ -1714,12 +1733,12 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
                 lines_read += 1
                 m = line_re.match(raw)
                 if not m:
-                    if len(unmatched_sample) < 5 and raw.strip():
-                        s = raw.strip()
-                        if not (s.startswith(("CPU", "Input", "Total",
-                                                 "Throughput", "Events"))
-                                or "events queued" in s.lower()):
-                            unmatched_sample.append(s[:140])
+                    _n = blkparse_reported_entries(raw)
+                    if _n is not None:
+                        reported_entries = _n
+                    if (len(unmatched_sample) < 5 and raw.strip()
+                            and not is_blkparse_summary_line(raw)):
+                        unmatched_sample.append(raw.strip()[:140])
                     continue
                 d = m.groupdict()
                 rwbs = d["rwbs"]
@@ -1742,9 +1761,7 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
                     proc.stdout.read()
             except Exception:
                 pass
-            _trace_mb_cli = sum(
-                p.stat().st_size for p in bin_dir.glob("trace.blktrace.*") if p.exists()
-            ) / (1024 * 1024) if bin_dir.exists() else 0
+            _trace_mb_cli = allocated_bytes(bin_dir.glob("trace.blktrace.*")) / (1024 * 1024)
             _wait_cli = max(60, min(int(_trace_mb_cli), 600))
             try:
                 proc.wait(timeout=_wait_cli)
@@ -1770,6 +1787,13 @@ def _blkparse_to_csv(bin_dir: Path, out_csv: Path,
             log.error("blkparse produced 0 lines of output (rc=0). "
                       "Check that binaries are readable and from this kernel. "
                       "stderr: %s", err_msg[:300])
+            return None
+
+        if events == 0 and reported_entries == 0:
+            status["empty"] = True
+            log.warning("blkparse found no events in %s (Events (trace): 0 entries): "
+                        "the device saw no block I/O while traced, or it is an NVMe "
+                        "multipath head that blktrace cannot trace", bin_dir)
             return None
 
         if events == 0 and lines_read > 0:
@@ -2707,6 +2731,13 @@ def _collect(args: argparse.Namespace) -> int:
         if _bt_raw_only:
             log.warning("Enabled blktrace stopped in interrupt raw-only mode: %s",
                         _bt.get("blktrace_reason", "raw trace binaries kept; parse later with analyze"))
+        elif _bt.get("blktrace_empty_reason") == "no_io":
+            # blktrace worked and the device was idle: nothing to fix.
+            log.warning("blktrace captured no events: %s", _bt.get("blktrace_reason"))
+        elif _bt.get("blktrace_empty_reason") == "multipath_head":
+            # Untraceable by design here; the sudo/debugfs fixes below do not apply.
+            _post_collect_failures.append(f"blktrace: {_bt.get('blktrace_reason')}")
+            log.warning("blktrace captured no events: %s", _bt.get("blktrace_reason"))
         elif not _bt.get("blktrace_available", False) or int(_bt.get("blktrace_events", 0) or 0) <= 0:
             _reason = _bt.get("blktrace_reason") or _bt.get("blktrace_stderr_tail") or "no blktrace events/binaries collected"
             _post_collect_failures.append(f"blktrace: {_reason}")

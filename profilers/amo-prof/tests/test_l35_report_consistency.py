@@ -57,6 +57,8 @@ _RESULTS = []
 
 CACHED, COMPUTE, DECODE = 68_036_418, 10_500_000, 220_000
 L2_EST_GB, L2_PHYS_GB, L2_PHYS_PEAK_GB = 202.4, 70.4, 79.8
+# The DRAM fields above are GiB (collectors/dram.py); the report prints decimal GB.
+L2_PHYS_SHOWN, L2_PHYS_PEAK_SHOWN = f"{L2_PHYS_GB * 2 ** 30 / 1e9:.1f}", f"{L2_PHYS_PEAK_GB * 2 ** 30 / 1e9:.1f}"
 TTFT_MS = E2E_MS = 79341.0
 TPOT_MS = 307.4
 N = 20
@@ -215,7 +217,7 @@ def main() -> int:
             _fv = _tiles(_b(_fr, run_label=_fname))[
                 "KV cache generated this run"][0]
             _check(f"the {_fname} form resolves", _fv != "not collected", True)
-            _check(f"and gives the same figure ({_fname})", _fv, "9,814.5 GB")
+            _check(f"and gives the same figure ({_fname})", _fv, "10,538.2 GB")
         # A column carrying only ONE of the two substrings must not match: a
         # prompt-token counter is not a phase counter.
         _wr = _mk(tmp / "wrongcol")
@@ -289,7 +291,7 @@ def main() -> int:
         _dp.write_text(",".join(_dh2) + "\n" + "\n".join(_rows2) + "\n")
         _dv = _tiles(_b(_dr, run_label="d"))["KV cache generated this run"]
         _check("the decoy does not displace the real phase counters",
-               _dv[0], "9,814.5 GB")
+               _dv[0], "10,538.2 GB")
         _check("so the figure is unchanged by its presence",
                f"{COMPUTE + DECODE:,} tokens of KV actually computed"
                in _dv[1], True)
@@ -311,7 +313,7 @@ def main() -> int:
         print("\n3. The L2 estimate is held to its own stated bound")
         _l2 = tl["L2 KV residency (est.)"]
         _check("the headline is the physical residency",
-               _l2[0].startswith(f"{L2_PHYS_GB} GB"), True)
+               _l2[0].startswith(f"{L2_PHYS_SHOWN} GB"), True)
         _check("not the token-derived figure",
                "202.4 GB /" in _l2[0] or "174.0 GB /" in _l2[0], False)
         _check("the note says it was capped",
@@ -326,10 +328,10 @@ def main() -> int:
         _check("the percentage follows the capped figure",
                "97% full" in _l2[1], False)
         _check("and so does the peak",
-               f"peak {L2_PHYS_PEAK_GB} GB" in _l2[1], True)
+               f"peak {L2_PHYS_PEAK_SHOWN} GB" in _l2[1], True)
         _check("the raw tile is unchanged",
                tl["L2 host DRAM used — raw (physical)"][0],
-               f"{L2_PHYS_GB} GB / 1,008 GB")
+               f"{L2_PHYS_SHOWN} GB / 1,082 GB")
 
         print("\n4. KV→NAND gets the guard its sibling got")
         _nand = tl["L3.5 KV→NAND total"]

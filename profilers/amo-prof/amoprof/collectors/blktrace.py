@@ -24,6 +24,8 @@ from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timezone  # noqa: F401
 from pathlib import Path
 
+from ..blockdev import allocated_bytes
+
 from ..base import (
     AIStackLayer,
     BaseCollector,
@@ -32,6 +34,55 @@ from ..base import (
 )
 
 log = logging.getLogger("amoprof.collectors.blktrace")
+
+# blkparse's own non-event output: one "Input file ... added" line per per-CPU
+# file, then per-CPU and total summaries ending in "Events (trace): N entries".
+_BLKPARSE_ENTRIES_RE = re.compile(r"Events \([^)]*\):\s*([\d,]+)\s+entries")
+
+
+def blkparse_reported_entries(line: str) -> int | None:
+    """Event count from blkparse's "Events (trace): N entries" trailer."""
+    m = _BLKPARSE_ENTRIES_RE.search(line)
+    return int(m.group(1).replace(",", "")) if m else None
+
+
+def is_blkparse_summary_line(line: str) -> bool:
+    s = line.strip()
+    return (s.startswith(("CPU", "Input", "Total", "Throughput", "Events", "Skips"))
+            or s.endswith(" added") or "events queued" in s.lower())
+
+
+def _read_available(stream) -> str:
+    """Everything currently readable from a pipe, without blocking."""
+    if stream is None:
+        return ""
+    chunks = []
+    try:
+        fd = stream.fileno()
+        os.set_blocking(fd, False)
+        while True:
+            b = os.read(fd, 65536)
+            if not b:
+                break
+            chunks.append(b)
+    except (BlockingIOError, OSError, ValueError):
+        pass
+    return b"".join(chunks).decode("utf-8", errors="replace")
+
+
+def empty_trace_reason(device: str) -> tuple[str, str]:
+    """(kind, explanation) for a trace that blkparse says holds no events."""
+    from ..blockdev import nvme_multipath_paths
+    paths = nvme_multipath_paths(device)
+    if paths is not None:
+        return ("multipath_head",
+                f"{device} is an NVMe multipath namespace head: its I/O is issued on "
+                f"controller path {', '.join(paths) or 'nvmeXcYnZ'}, which blktrace cannot "
+                f"attach to, so the trace holds no events. Use --enable-biosnoop for per-I/O "
+                f"data, or boot with nvme_core.multipath=N for blktrace.")
+    return ("no_io",
+            f"no block I/O on {device} during the trace window (blkparse: 0 entries); "
+            f"blktrace worked, the device was idle")
 
 
 @register_collector
@@ -109,9 +160,11 @@ class BlktraceCollector(BaseCollector):
         # Use a fixed file prefix so blkparse later finds `trace.blktrace.N`.
         self._trace_prefix = self._trace_dir / "trace"
         self._csv_path = self.work_dir / ("blkparse_events.generated" + _sfx + ".csv")
+        self._stdout_path = self.work_dir / ("blktrace_stdout" + _sfx + ".txt")
 
         self._proc = None
         self._reason = ""
+        self._empty_kind = ""
         self._events = 0
         self._t0 = 0.0
         self._launch_cmd: list[str] = []
@@ -166,11 +219,19 @@ class BlktraceCollector(BaseCollector):
             return -2, f"{' '.join(cmd)} {e!r}"
 
     def _launch_blktrace_process(self, cmd: list[str]) -> subprocess.Popen:
-        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        # Own session: sudo ignores signals sent from its own process group,
+        # so stop()'s SIGINT never reached blktrace; killing sudo then left it
+        # running as root, holding the device and the stderr pipe.
+        # stdout carries the per-CPU and "Total: N events (dropped M)" summary,
+        # so it goes to a file rather than /dev/null.
+        with open(self._stdout_path, "w", encoding="utf-8") as out:
+            return subprocess.Popen(cmd, stdout=out, stderr=subprocess.PIPE, text=True,
+                                    start_new_session=True)
 
     def start(self):
         self._events = 0
         self._reason = ""
+        self._empty_kind = ""
         # Snapshot baseline /sys/block/<dev>/stat counters. Used in stop() to
         # compute kernel-side ground-truth deltas during the trace window:
         #   - wr_sectors_delta → bytes written (cross-check vs blktrace bytes)
@@ -209,6 +270,14 @@ class BlktraceCollector(BaseCollector):
         if not Path(self.device).exists():
             self._reason = f"device not found: {self.device}"
             log.warning("BlktraceCollector: %s", self._reason)
+            return
+        # A multipath namespace head yields an empty trace while holding the
+        # device (no other tracer can attach) and flooding stderr with debugfs
+        # read errors, so do not start one.
+        from ..blockdev import nvme_multipath_paths
+        if nvme_multipath_paths(self.device) is not None:
+            self._empty_kind, self._reason = empty_trace_reason(self.device)
+            log.warning("BlktraceCollector: not tracing: %s", self._reason)
             return
 
         # Binary capture mode: blktrace writes <prefix>.blktrace.N files per CPU.
@@ -378,9 +447,10 @@ class BlktraceCollector(BaseCollector):
         log.info("BlktraceCollector: parsing %d binaries (%d MB total) "
                  "with: %s",
                  len(bins),
-                 sum(p.stat().st_size for p in bins) // (1024*1024),
+                 allocated_bytes(bins) // (1024*1024),
                  " ".join(cmd))
         events = 0
+        reported_entries = None
         unmatched_sample: list[str] = []
         try:
             # Capture stderr too — when blkparse fails it writes to stderr
@@ -411,17 +481,14 @@ class BlktraceCollector(BaseCollector):
                     else:
                         m = self._LINE_RE_OLD.match(raw)
                     if not m:
-                        # Capture a small sample of unmatched lines for diagnostics
-                        if len(unmatched_sample) < 5 and raw.strip():
-                            # Skip obvious non-event lines (CPU summary, "Input file")
-                            stripped = raw.strip()
-                            if not (stripped.startswith("CPU") or
-                                    stripped.startswith("Input") or
-                                    stripped.startswith("Total") or
-                                    stripped.startswith("Throughput") or
-                                    stripped.startswith("Events") or
-                                    "events queued" in stripped.lower()):
-                                unmatched_sample.append(stripped[:140])
+                        _n = blkparse_reported_entries(raw)
+                        if _n is not None:
+                            reported_entries = _n
+                        # Capture a small sample of unmatched lines for diagnostics,
+                        # skipping blkparse's own summary lines.
+                        if (len(unmatched_sample) < 5 and raw.strip()
+                                and not is_blkparse_summary_line(raw)):
+                            unmatched_sample.append(raw.strip()[:140])
                         continue
                     d = m.groupdict()
                     rwbs = d.get("rwbs") or ""
@@ -469,10 +536,7 @@ class BlktraceCollector(BaseCollector):
                         pass
                 # Wait for blkparse to finish. Use a generous timeout scaled to
                 # trace size: 1s per MB of binary data, minimum 60s, max 600s.
-                _trace_mb = sum(
-                    p.stat().st_size for p in self._trace_dir.glob("trace.blktrace.*")
-                    if p.exists()
-                ) / (1024 * 1024)
+                _trace_mb = allocated_bytes(self._trace_dir.glob("trace.blktrace.*")) / (1024 * 1024)
                 _wait_s = max(60, min(int(_trace_mb), 600))
                 stderr_output = ""
                 try:
@@ -498,6 +562,13 @@ class BlktraceCollector(BaseCollector):
                 self._reason = f"blkparse exited rc={rc}: {err_msg[:200]}"
                 log.error("BlktraceCollector: %s", self._reason)
                 return -1
+
+            if events == 0 and reported_entries == 0:
+                # blkparse itself counted no events: the trace is empty, not
+                # in an unknown format.
+                self._empty_kind, self._reason = empty_trace_reason(self.device)
+                log.warning("BlktraceCollector: %s", self._reason)
+                return 0
 
             if events == 0 and lines_read > 0:
                 # blkparse produced output but our regex matched nothing
@@ -534,7 +605,11 @@ class BlktraceCollector(BaseCollector):
         # collection early we send SIGINT for a clean shutdown. On Ctrl-C,
         # keep this bounded so the user does not wait on a 4-hour blktrace -w.
         interrupted = bool(getattr(self, "_amoprof_interrupted", False))
-        stop_timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (3.0 if interrupted else 10.0))
+        # Tearing down the per-CPU relay buffers is slow: on a 256-CPU host
+        # with -b 16384 -n 4, `blktrace -w 10` took 88 s to exit.  Stopping it
+        # after 10 s orphaned it mid-flush, so the files were parsed while
+        # still being written and its event/drop totals were lost.
+        stop_timeout = float(getattr(self, "_amoprof_stop_timeout_s", 0.0) or (3.0 if interrupted else 180.0))
         stderr_text = ""
         if self._proc is not None:
             if self._proc.poll() is None:
@@ -552,13 +627,17 @@ class BlktraceCollector(BaseCollector):
             # dropped-event warnings there. Without this, we lose the only
             # signal that distinguishes "I traced everything correctly" from
             # "the kernel buffer overran and I silently dropped 75% of writes".
-            try:
-                if self._proc.stderr is not None:
-                    stderr_text = self._proc.stderr.read() or ""
-            except Exception:
-                stderr_text = ""
+            # Read only what is there: a blktrace that outlived the kill
+            # still holds the pipe, and a blocking read() never returns.
+            stderr_text = _read_available(self._proc.stderr)
+        # The per-CPU and "Total" summary goes to stdout, kept in a file.
+        try:
+            stdout_text = self._stdout_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            stdout_text = ""
+        summary_text = stdout_text + "\n" + stderr_text
 
-        # Parse blktrace's per-CPU + dropped-events summary out of stderr.
+        # Parse blktrace's per-CPU + dropped-events summary.
         # Typical format on completion:
         #   === nvme7n1 ===
         #     CPU  0:  234567 events, 27 KiB data
@@ -571,11 +650,11 @@ class BlktraceCollector(BaseCollector):
             # Per-CPU "dropped" warnings (one per overflowing CPU) — these
             # appear AS THEY HAPPEN, not just in the final summary.
             for m in re.finditer(r"CPU\s+(\d+).*?dropped\s+(\d+)\s+events",
-                                  stderr_text, re.IGNORECASE):
+                                  summary_text, re.IGNORECASE):
                 per_cpu_dropped[int(m.group(1))] = int(m.group(2))
             # Final summary "Total: N events (dropped M), ..."
             m_tot = re.search(r"Total[:\s]+([\d,]+)\s+events\s*\(dropped\s+([\d,]+)\)",
-                               stderr_text, re.IGNORECASE)
+                               summary_text, re.IGNORECASE)
             if m_tot:
                 reported_events = int(m_tot.group(1).replace(",", ""))
                 dropped_events = int(m_tot.group(2).replace(",", ""))
@@ -586,7 +665,7 @@ class BlktraceCollector(BaseCollector):
 
         bins = sorted(self._trace_dir.glob("trace.blktrace.*"))
         bin_count = len(bins)
-        bin_bytes = sum(p.stat().st_size for p in bins) if bins else 0
+        bin_bytes = allocated_bytes(bins)
 
         if bin_count == 0:
             reason = self._reason or "no trace.blktrace.* binaries produced"
@@ -594,6 +673,7 @@ class BlktraceCollector(BaseCollector):
                 reason = f"blktrace exited immediately rc={self._launch_rc}"
             return {"blktrace_available": False,
                     "blktrace_reason": reason,
+                    "blktrace_empty_reason": self._empty_kind,
                     "blktrace_events": 0,
                     "blktrace_device": self.device,
                     "blktrace_binary_dir": str(self._trace_dir),
@@ -735,6 +815,9 @@ class BlktraceCollector(BaseCollector):
             "blktrace_csv_event_cap": self.max_csv_events,
             "blktrace_csv_capped": bool(self.max_csv_events is not None and self._events >= self.max_csv_events),
             "blktrace_reason":   self._reason,
+            # "no_io" (idle device) or "multipath_head" (untraceable) when
+            # blkparse counted no events; "" otherwise.
+            "blktrace_empty_reason": self._empty_kind,
             "blktrace_command": " ".join(self._launch_cmd) if self._launch_cmd else "",
             "blktrace_launch_rc": self._launch_rc,
             "blktrace_launch_stderr_tail": (self._launch_stderr or "")[-2000:],

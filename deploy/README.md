@@ -293,6 +293,16 @@ The same playbooks deploy to the machine they run on. It must run Ubuntu 24.04 o
 
     `--ask-become-pass` asks for your sudo password; leave it out if you have password-less sudo.
 
+### Test a deployment and remove it again
+
+`scripts/test-deploy.sh` deploys the stack to a management server and an application server, checks that the
+services run and the REST API answers, then removes everything and checks that nothing is left on either machine:
+
+    deploy/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key> [--mock]
+
+The CI job "deploy cognos" runs it by hand on `main` pipelines; see "Deploy to the lab" in
+[docs/ci.md](../docs/ci.md#deploy-to-the-lab).
+
 ### Manage Cognos Services After Deployment
 
 * Configure and start Cognos services, e.g. after running `stop_cognos.yml` or after changing variables in `group_vars`.
