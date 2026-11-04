@@ -368,6 +368,42 @@ So, every time the CMMH driver service is restarted, any pending SCMC request th
 reached the Node process or is in queue to be placed for service by Node process will
 get timed out since Node process gets restarted as well.
 
+8. CMM-MP adapter plugin (libmpctl)
+a) What is the feature
+CMM-MP (CXL Memory Module - Multi Pathing) devices are integrated through the
+DevCMMMP adapter plugin (libcmmmp.so, src/cmmmp), which wraps the prebuilt
+libmpctl v0.3 library in third_party/libmpctl. The plugin registers with the
+DeviceManager under the name "cmmmp" and exposes three kinds of devices:
+- POOL: the memory pool visible to this server,
+- MPDEV: each local and remote MP device (FW / FPGA version, chip id, capacity,
+  back-end Ethernet link state, FPGA temperature),
+- MPN: each memory pool node, which can be attached to the host as a NUMA node
+  or devdax device.
+Device IDs use the layout [47:32] vendor 0x1E98 | [31:16] kind code (pool
+0xFF00, MP device 0xFF01, MPN 0xFF02) | [15:0] index (MP device slot_id, MPN id).
+
+b) Build and runtime requirements
+libmpctl.a is built with GCC 13 against glibc 2.38+ and uses libcxl, libndctl and
+libdaxctl (Ubuntu: libcxl-dev, libndctl-dev, libdaxctl-dev; Rocky / OL:
+cxl-devel, ndctl-devel, daxctl-devel). CMake checks that libmpctl links on the
+build host and skips the plugin with a warning otherwise (e.g. on Ubuntu 22.04
+and Rocky 9). Pass -DWITH_CMMMP=OFF to disable it explicitly. The plugin is
+installed next to libcmmh.so in the plugin_dir configured in cxl.conf.
+
+c) How to configure it
+The "cmmmp" section of /usr/local/svk/feature_modules/cxl/config/cxl.conf
+controls the adapter:
+- "enabled": register CMM-MP devices (default true),
+- "auto_pool_setup": run host-initiated discovery and pool create during device
+  discovery when the pool is not ready (default false, as this changes pool-wide
+  state shared with other servers),
+- "default_attach_mode": "numa" or "devdax", used when attach does not request a
+  mode (default "numa"),
+- "expose_remote_mpdevs": register remote MP devices for observability
+  (default true),
+- "fpga_temp_warn_C": FPGA temperature above which an MP device reports
+  "Warning" (default 85).
+
 
 ## Authors and acknowledgment
 * Sukesh Nagaraja

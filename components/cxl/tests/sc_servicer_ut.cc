@@ -559,7 +559,7 @@ TEST_F(ServicerTest, GetIPAddressSuccess) {
   std::string ip;
   int status = get_ip_address(json_filepath, ip);
   EXPECT_EQ(status, 0);
-  EXPECT_EQ(ip, "105.140.86.13");
+  EXPECT_EQ(ip, "127.0.0.1");
 }
 
 TEST_F(ServicerTest, MissingSwitchObject) {

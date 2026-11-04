@@ -21,6 +21,14 @@ set(SVK_LOGIC_MODULE_PATH "${SVK_BASE_PATH}/logic_modules")
 
 #Subpath for logic modules
 set(CMMH_LIB_PATH "${SVK_LOGIC_MODULE_PATH}/cmmh/lib64")
+#PluginManager scans a single plugin_dir (cxl.conf), so all adapter plugins
+#are installed next to the CMM-H plugin
+set(CMMMP_LIB_PATH "${CMMH_LIB_PATH}")
+
+#CMM-MP adapter plugin (libmpctl)
+option(WITH_CMMMP "Build the CMM-MP adapter plugin if libmpctl links" ON)
+set(CMMMP_THIRD_PARTY_DIR "${PROJECT_SOURCE_DIR}/third_party/libmpctl" CACHE STRING "Path to libmpctl directory")
+set(CMMMP_STATIC_LIB "${CMMMP_THIRD_PARTY_DIR}/libmpctl.a" CACHE STRING "static lib path to libmpctl")
 
 #Third party lib paths
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")

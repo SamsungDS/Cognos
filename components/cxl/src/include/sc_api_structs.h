@@ -79,6 +79,31 @@ struct StatInfo {
 };
 
 /**
+ * @brief Parameters for CXLDeviceAdapter::attach_memory().
+ */
+struct AttachParams {
+  // Requested host mode ("numa" or "devdax"); empty selects adapter default
+  std::string mode;
+};
+
+/**
+ * @brief Pool-level operations for CXLDeviceAdapter::pool_operation().
+ */
+enum class PoolOp {
+  HOST_INIT_DISCOVERY,  // kick off host-initiated pool discovery
+  CREATE,               // create the memory pool
+  ADD                   // hot add a device to the pool
+};
+
+/**
+ * @brief Parameters for CXLDeviceAdapter::pool_operation().
+ */
+struct PoolOpParams {
+  // target identifier for PoolOp::ADD
+  unsigned int id = 0;
+};
+
+/**
  * @brief Device configuration parsed from JSON.
  *
  * This struct holds device attributes from the config/cxl_dev_id_map.json file.
