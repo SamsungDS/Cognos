@@ -682,7 +682,6 @@ deploy cognos:
     - DEPLOY_KEY=$(mktemp)
     - printf '%s' "$DEPLOY_SSH_KEY" | base64 -d > "$DEPLOY_KEY"
     - chmod 600 "$DEPLOY_KEY"
-    - (cd deploy && ansible-galaxy collection install -r collections/requirements.yml)
   script:
     - deploy/scripts/fetch-packages.py --os ubuntu24 --pipeline "$CI_PIPELINE_ID"
     - >-

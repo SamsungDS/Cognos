@@ -35,6 +35,13 @@ case $p in
 esac
 """
 
+# Stand-in ansible-galaxy: fails the first $FAKE_GALAXY_FAILS times (default 0), as a flaky network would.
+GALAXY = r"""#!/bin/sh
+n=$(cat "$FAKE/galaxy-attempts" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "$FAKE/galaxy-attempts"
+echo "galaxy $*" >> "$FAKE/calls"
+[ "$n" -gt "${FAKE_GALAXY_FAILS:-0}" ] || { echo "Network is unreachable" >&2; exit 1; }
+"""
+
 M, A = "mgmt.lab", "app.lab"
 
 
@@ -43,6 +50,7 @@ class TestDeployTest(TempDirTestCase):
         super().setUp()
         self.stub("ssh", SSH.split("\n", 1)[1])
         self.stub("ansible-playbook", PLAYBOOK.split("\n", 1)[1])
+        self.stub("ansible-galaxy", GALAXY.split("\n", 1)[1])
         self.root = self.tmp / "root"
         (self.root / "deploy/scripts").mkdir(parents=True)
         (self.root / "deploy/artifacts/SVK").mkdir(parents=True)
@@ -64,7 +72,8 @@ class TestDeployTest(TempDirTestCase):
 
     def run_test(self, *extra, **env):
         result = sh(str(self.root / "deploy/scripts/test-deploy.sh"), "--management", M, "--application", A,
-                    "--key", str(self.key), *extra, check=False, env=self.env(FAKE=self.fake, **env))
+                    "--key", str(self.key), *extra, check=False,
+                    env=self.env(FAKE=self.fake, COLLECTION_RETRY_DELAY=0, **env))
         calls = (self.fake / "calls").read_text().splitlines() if (self.fake / "calls").exists() else []
         return result, calls
 
@@ -127,6 +136,25 @@ class TestDeployTest(TempDirTestCase):
         result, _ = self.run_test()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("unit cognos-node.service", result.stdout)
+
+    def test_collections_are_installed_first(self):
+        result, calls = self.run_test()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(calls[0].startswith("galaxy collection install -r collections/requirements.yml"), calls[0])
+
+    def test_collection_install_is_retried(self):
+        result, calls = self.run_test(FAKE_GALAXY_FAILS="2")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sum(c.startswith("galaxy ") for c in calls), 3)
+        self.assertIn("attempt 2 failed; retrying", result.stdout)
+        self.assertEqual(self.playbooks(calls), ["deploy_cognos.yml", "remove_cognos.yml"])
+
+    def test_collection_install_gives_up_without_touching_the_hosts(self):
+        result, calls = self.run_test(FAKE_GALAXY_FAILS="3")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("after 3 attempts; the hosts were not touched", result.stderr)
+        self.assertEqual([c for c in calls if not c.startswith("galaxy ")], [])  # no ssh, no playbook
+        self.assertFalse((self.root / "deploy/hosts.test-deploy").exists())
 
     def test_mock_skips_the_cmmh_driver(self):
         result, calls = self.run_test("--mock")

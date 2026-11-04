@@ -19,7 +19,10 @@
 #      only reported (on the first run, for example, an older Cognos installation).
 # Exit 0 only if the deploy, the checks and the cleanup all succeeded.
 #
-# Needs ansible (deploy/collections/requirements.yml installed) and ssh.
+# Before step 1 it installs the ansible collections (deploy/collections/requirements.yml) from Ansible Galaxy, with
+# retries: the lab network drops connections now and then. If that fails, the hosts are not touched.
+#
+# Needs ansible and ssh. COLLECTION_RETRY_DELAY (seconds between attempts, default 30) is for the tests.
 set -euo pipefail
 
 DEPLOY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
@@ -177,6 +180,19 @@ ansible_user=root
 ansible_ssh_private_key_file=$KEY
 ansible_ssh_common_args='-o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$WORK/known_hosts'
 EOF
+
+echo "== installing the ansible collections"
+attempt=1
+until (cd "$DEPLOY" && ANSIBLE_CONFIG="$DEPLOY/ansible.cfg" ansible-galaxy collection install \
+    -r collections/requirements.yml); do
+    if [[ $attempt -ge 3 ]]; then
+        rm -f "$INVENTORY"
+        die "could not install the ansible collections from Ansible Galaxy after 3 attempts; the hosts were not touched"
+    fi
+    echo "attempt $attempt failed; retrying in ${COLLECTION_RETRY_DELAY:-30} s"
+    sleep "${COLLECTION_RETRY_DELAY:-30}"
+    attempt=$((attempt + 1))
+done
 
 echo "== recording the state of ${HOSTS[*]}"
 for host in "${HOSTS[@]}"; do
