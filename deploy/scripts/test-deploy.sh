@@ -69,7 +69,7 @@ remote() {
 # not-installed), "unit", "path", "user", "ldconf", "ufw".
 # shellcheck disable=SC2016
 STATE_COMMAND='dpkg-query -W -f "\${db:Status-Abbrev}|\${Package}\n" | awk -F"|" "\$1 !~ /^[up]n/ {print \"pkg \" \$2}"
-systemctl list-unit-files --no-legend 2> /dev/null | awk "{print \"unit \" \$1}"
+systemctl list-unit-files --no-legend 2> /dev/null | awk "\$2 != \"transient\" {print \"unit \" \$1}"
 for p in /etc/svk /usr/local/svk /var/log/svk /var/lib/svk /var/lib/influxdb /opt/installed /root/.ansible /root/logs; do
     [ -e "$p" ] && echo "path $p"
 done
@@ -78,12 +78,16 @@ ls /etc/ld.so.conf.d | sed "s/^/ldconf /"
 command -v ufw > /dev/null && ufw status | sed "s/^/ufw /"
 true'
 
+# Login sessions (session-N.scope) and transient runs (run-*.scope) come and go with every ssh connection,
+# including ours: not a trace of the deployment.
 state() {
-    remote "$1" "$STATE_COMMAND" | sort -u
+    remote "$1" "$STATE_COMMAND" | grep -vE '^unit (session-[0-9]+|run-[^ ]+)\.scope$' | sort -u
 }
 
+# ANSIBLE_CONFIG explicitly: ansible ignores an ansible.cfg in a world-writable directory, which a CI checkout
+# can be, and without it does not find deploy/roles.
 playbook() {
-    (cd "$DEPLOY" && ansible-playbook -i "$INVENTORY" "playbooks/$1" \
+    (cd "$DEPLOY" && ANSIBLE_CONFIG="$DEPLOY/ansible.cfg" ansible-playbook -i "$INVENTORY" "playbooks/$1" \
         -e "{\"scmc_cxl_mock_enable\": $MOCK, \"cognos_install_gui_enabled\": false, \"cognos_rbac_enabled\": false}")
 }
 
