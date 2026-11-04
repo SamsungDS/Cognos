@@ -249,21 +249,37 @@ class PublishReleaseTest(ApiTestCase):
         p = self.p
         d = self.tmp / "release"
         (d / "ubuntu24").mkdir(parents=True)
+        (d / "ol10").mkdir()
         (d / "ubuntu24/cognos-core_1.6.3-ubuntu24.04_amd64.deb").write_bytes(b"deb")
+        (d / "ol10/cognos-core-1.6.3-1.el10.x86_64.rpm").write_bytes(b"rpm")
+        (d / "ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm").write_bytes(b"grpc")
         (d / "set.json").write_text(json.dumps({"packages": [
-            {"file": "ubuntu24/cognos-core_1.6.3-ubuntu24.04_amd64.deb", "os": "ubuntu24"}]}))
+            {"file": "ubuntu24/cognos-core_1.6.3-ubuntu24.04_amd64.deb", "os": "ubuntu24"},
+            {"file": "ol10/cognos-core-1.6.3-1.el10.x86_64.rpm", "os": "ol10"},
+            {"file": "ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm", "os": "ol10"}]}))
         self.gitlab.route("PUT", rf"{p}/packages/generic/cognos/1\.6\.3/.*", (201, {}))
         self.gitlab.route("GET", rf"{p}/releases/v1\.6\.3", (404, {}))
         self.gitlab.route("POST", rf"{p}/releases", (201, {}))
         work = self.repo(FILES)
         self.api(work, "publish-release", "--dir", str(d), check=True, CI_COMMIT_TAG="v1.6.3")
         uploads = self.gitlab.sent("PUT", rf"{p}/packages/generic/cognos/1\.6\.3/.*")
-        self.assertEqual(sorted(u["path"].rsplit("/", 1)[1] for u in uploads),
-                         ["cognos-core_1.6.3-ubuntu24.04_amd64.deb", "set.json"])
+        by_name = {u["path"].rsplit("/", 1)[1]: u for u in uploads}
+        self.assertEqual(sorted(by_name), ["cognos-1.6.3-ol10.zip", "cognos-1.6.3-ubuntu24.zip",
+                                           "cognos-core-1.6.3-1.el10.x86_64.rpm",
+                                           "cognos-core_1.6.3-ubuntu24.04_amd64.deb",
+                                           "cognos-grpc-1.59.2-1.el10.x86_64.rpm", "set.json"])
         self.assertTrue(all(u["headers"].get("job-token") == "job-token" for u in uploads))
+        with zipfile.ZipFile(io.BytesIO(by_name["cognos-1.6.3-ol10.zip"]["body"])) as z:
+            self.assertEqual(sorted(z.namelist()), ["ol10/cognos-core-1.6.3-1.el10.x86_64.rpm",
+                                                    "ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm", "set.json"])
+            self.assertEqual(z.read("ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm"), b"grpc")
+        with zipfile.ZipFile(io.BytesIO(by_name["cognos-1.6.3-ubuntu24.zip"]["body"])) as z:
+            self.assertEqual(sorted(z.namelist()), ["set.json", "ubuntu24/cognos-core_1.6.3-ubuntu24.04_amd64.deb"])
         release = json.loads(self.gitlab.sent("POST", rf"{p}/releases")[0]["body"])
         self.assertEqual(release["tag_name"], "v1.6.3")
-        self.assertEqual(len(release["assets"]["links"]), 2)
+        links = [l["name"] for l in release["assets"]["links"]]
+        self.assertEqual(links[:2], ["cognos-1.6.3-ol10.zip", "cognos-1.6.3-ubuntu24.zip"])
+        self.assertEqual(len(links), 6)
 
 
 class SyncTest(ApiTestCase):

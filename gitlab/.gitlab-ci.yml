@@ -513,9 +513,13 @@ publish dev set:
     - gitlab/scripts/api.py job-results --pipeline "$CI_PIPELINE_ID" | tee results.json
     # The newest set: the newest successful "publish dev set" on main, whatever its pipeline's status.
     - gitlab/scripts/api.py newest-dev-set --out previous
+    # cognos-grpc is not built here: the pinned version from Nexus goes into the ol10 set, so that deploying needs
+    # nothing but GitLab. If Nexus does not answer, the set keeps the previous set's cognos-grpc.
+    - 'ARTIFACTS_DIR=grpc deploy/scripts/fetch-packages.py --os ol10 --grpc || echo "WARNING: cognos-grpc not fetched"'
+    - GRPC_RPM=$(ls grpc/cognos-grpc-*.rpm 2> /dev/null | head -n 1)
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --results results.json
-      --previous previous/dev-set --out dev-set
+      --previous previous/dev-set ${GRPC_RPM:+--extra ol10=$GRPC_RPM} --out dev-set
   artifacts:
     name: dev-set-$CI_PIPELINE_ID
     expire_in: 10 days
@@ -615,7 +619,11 @@ publish release:
     - !reference [.internal-ca, before_script]
     - !reference [.version, before_script]
   script:
-    - ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --complete --out release
+    # A release needs cognos-grpc for ol10 (from Nexus, pinned): without it this job fails.
+    - ARTIFACTS_DIR=grpc deploy/scripts/fetch-packages.py --os ol10 --grpc
+    - >-
+      ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --complete
+      --extra "ol10=$(ls grpc/cognos-grpc-*.rpm | head -n 1)" --out release
     - gitlab/scripts/api.py publish-release --dir release
 
 # ---------------------------------------------------------------------------

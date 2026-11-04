@@ -13,9 +13,9 @@ from helpers import REPO, FakeGitLab, TempDirTestCase, sh
 UBUNTU = ["cognos-core_1.7.0~dev.5-ubuntu24.04_amd64.deb", "cognos-core-dev_1.7.0~dev.5-ubuntu24.04_amd64.deb",
           "cognos-cxl_1.7.0~dev.5-ubuntu24.04_amd64.deb", "cognos-cxl-mock_1.7.0~dev.5-ubuntu24.04_amd64.deb",
           "cognos-app_1.7.0~dev.5-ubuntu24.04_amd64.deb"]
-OL10 = ["cognos-core-1.7.0~dev.5-1.el10.ol10.2.x86_64.rpm"]
+OL10 = ["cognos-core-1.7.0~dev.5-1.el10.ol10.2.x86_64.rpm", "cognos-grpc-1.59.2-1.el10.x86_64.rpm"]
 COMPONENT = {"cognos-core": "core", "cognos-core-dev": "core", "cognos-cxl": "cxl", "cognos-cxl-mock": "cxl-mock",
-             "cognos-app": "sapp"}
+             "cognos-app": "sapp", "cognos-grpc": "grpc"}
 
 
 def component(file):
@@ -143,16 +143,46 @@ class FetchTest(TempDirTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("not found", result.stderr)
 
-    def test_ol10_gets_pinned_grpc_from_nexus(self):
-        self.pipelines((2, 20))
-        self.publish_set(20, 2)
+    def nexus(self):
         rpm = f"{self.gitlab.url}/repository/svk_yum_ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm"
         self.gitlab.route("GET", r"/service/rest/v1/search/assets\?repository=svk_yum_ol10&name=cognos-grpc&version=1\.59\.2",
                           {"items": [{"downloadUrl": rpm}]})
         self.gitlab.route("GET", r"/repository/svk_yum_ol10/cognos-grpc-1\.59\.2-1\.el10\.x86_64\.rpm", b"grpc")
-        self.fetch("--os", "ol10", "--set", "latest")
+
+    def test_ol10_gets_grpc_from_the_set_not_nexus(self):
+        self.pipelines((2, 20))
+        self.publish_set(20, 2)
+        result = self.fetch("--os", "ol10", "--set", "latest")
         self.assertEqual(self.files(), ["cognos-core-1.7.0~dev.5-1.el10.ol10.2.x86_64.rpm",
                                         "cognos-grpc-1.59.2-1.el10.x86_64.rpm"])
+        self.assertEqual(self.gitlab.sent("GET", r"/service/rest/.*"), [])
+        self.assertNotIn("no cognos-grpc", result.stdout)
+
+    def test_set_without_grpc_warns_without_contacting_nexus(self):
+        self.pipelines((2, 20))
+        self.publish_set(20, 2, files=[("ol10", OL10[0])])
+        result = self.fetch("--os", "ol10", "--set", "latest")
+        self.assertIn("WARNING: no cognos-grpc in these packages", result.stdout)
+        self.assertIn("--grpc", result.stdout)
+        self.assertEqual(self.gitlab.sent("GET", r"/service/rest/.*"), [])
+
+    def test_grpc_from_nexus_adds_to_what_is_there(self):
+        self.nexus()
+        self.dest.mkdir()
+        (self.dest / OL10[0]).write_text("core")
+        (self.dest / "cognos-grpc-1.50.0-1.el10.x86_64.rpm").write_text("old grpc")
+        self.fetch("--os", "ol10", "--grpc")
+        self.assertEqual(self.files(), [OL10[0], "cognos-grpc-1.59.2-1.el10.x86_64.rpm"])
+
+    def test_grpc_is_for_ol10_only(self):
+        result = self.fetch("--os", "ubuntu24", "--grpc", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("ol10 only", result.stderr)
+
+    def test_unreachable_nexus_fails_quickly_with_its_name(self):
+        result = self.fetch("--os", "ol10", "--grpc", check=False)  # no Nexus routes: 404 from the fake server
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("/service/rest/v1/search/assets", result.stderr)
 
     def test_local(self):
         local = self.root / "build/artifacts/ubuntu24"
