@@ -10,19 +10,22 @@ Usage: deploy/scripts/fetch-packages.py --os ubuntu24|ol10 [--mock] [--only <com
   --pipeline <id>        the packages built by that pipeline, for example a merge request's; components it did
                          not build come from the newest dev set
   --local                the packages of your own ./build.sh, from build/artifacts/<os>/
+  --grpc                 only cognos-grpc for ol10, from Nexus at GRPC_VERSION (needs the lab network; the
+                         pipeline uses it to put cognos-grpc into dev sets and releases)
 
   --mock                 cognos-cxl-mock instead of cognos-cxl
   --only <components>    only these, comma-separated: core,mgmt-fw,node,ras,slat,me,cxl,sapp
   --with-dev             also the -dev/-devel packages (for building against them)
 
-Existing cognos-* packages in the destination are removed first, so the playbooks install exactly this set. Without
---only, ol10 also gets cognos-grpc, which is not built in this repository: it comes from Nexus at GRPC_VERSION.
+Existing cognos-* packages in the destination are removed first, so the playbooks install exactly this set.
+Everything comes from GitLab: for ol10, dev sets and releases include cognos-grpc (not built in this repository; the
+pipeline adds the pinned version). If the packages have none, this says so; --grpc downloads it separately.
 
 Environment (defaults in brackets):
   COGNOS_GITLAB_URL   [https://cxl-gitlab.ssi.samsung.com]
   COGNOS_PROJECT      [dfs/svk/cognos]
   GITLAB_TOKEN        only needed if the project or its pipelines are not public
-  NEXUS_URL           [http://ssg-nexus.msl.lab:8081]
+  NEXUS_URL           [http://ssg-nexus.msl.lab:8081], for --grpc only
   ARTIFACTS_DIR       [deploy/artifacts/SVK]
 
 Needs only Python 3 and its standard library.
@@ -47,13 +50,14 @@ GRPC_VERSION = "1.59.2"
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 GITLAB = os.environ.get("COGNOS_GITLAB_URL", "https://cxl-gitlab.ssi.samsung.com")
 API = f"{GITLAB}/api/v4/projects/{urllib.parse.quote(os.environ.get('COGNOS_PROJECT', 'dfs/svk/cognos'), safe='')}"
-NEXUS = os.environ.get("NEXUS_URL", "http://ssg-nexus.msl.lab:8081")
+NEXUS = os.environ.get("NEXUS_URL", "http://ssg-nexus.msl.lab:8081").rstrip("/").removesuffix("/repository")
 DEST = pathlib.Path(os.environ.get("ARTIFACTS_DIR", ROOT / "deploy" / "artifacts" / "SVK"))
 SUFFIX = {"ubuntu24": ".deb", "ol10": ".rpm"}
 DEV_SET_JOB = "publish dev set"
 PACKAGE_COMPONENT = {
     "cognos-core": "core", "cognos-mgmt-fw": "mgmt-fw", "cognos-node": "node", "cognos-ras": "ras",
     "cognos-slat": "slat", "cognos-me": "me", "cognos-cxl": "cxl", "cognos-cxl-mock": "cxl", "cognos-app": "sapp",
+    "cognos-grpc": "grpc",
 }
 
 
@@ -61,12 +65,12 @@ def die(message):
     sys.exit(f"fetch-packages: {message}")
 
 
-def get(url, missing_ok=False):
+def get(url, missing_ok=False, timeout=600):
     """GET url; bytes, or None for 404 when missing_ok."""
     headers = {"PRIVATE-TOKEN": os.environ["GITLAB_TOKEN"]} if os.environ.get("GITLAB_TOKEN") and url.startswith(
         GITLAB) else {}
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=600) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as e:
         if e.code == 404 and missing_ok:
@@ -181,14 +185,15 @@ def merge(base, overlay):
     return merged
 
 
-def grpc(args):
+def grpc():
+    """cognos-grpc for ol10 from Nexus, at GRPC_VERSION. A short timeout: Nexus is only reachable from the lab."""
     url = (f"{NEXUS}/service/rest/v1/search/assets?repository=svk_yum_ol10&name=cognos-grpc&version={GRPC_VERSION}")
-    items = get_json(url)["items"]
+    items = json.loads(get(url, timeout=60))["items"]
     rpm = next((a["downloadUrl"] for a in items if a["downloadUrl"].endswith(".rpm")), None)
     if not rpm:
         die(f"cognos-grpc {GRPC_VERSION} not found in Nexus (svk_yum_ol10)")
     print(f"cognos-grpc {GRPC_VERSION} from Nexus")
-    return {rpm.rsplit("/", 1)[1]: get(rpm)}
+    return {rpm.rsplit("/", 1)[1]: get(rpm, timeout=120)}
 
 
 def main():
@@ -203,12 +208,17 @@ def main():
     source.add_argument("--set", dest="dev_set")
     source.add_argument("--pipeline")
     source.add_argument("--local", action="store_true")
+    source.add_argument("--grpc", action="store_true")
     args = parser.parse_args()
     unknown = args.only - set(PACKAGE_COMPONENT.values())
     if unknown:
         die(f"unknown components: {', '.join(sorted(unknown))}")
 
-    if args.release:
+    if args.grpc:
+        if args.os != "ol10":
+            die("--grpc is for ol10 only (ubuntu24 does not need cognos-grpc)")
+        files = grpc()
+    elif args.release:
         files = from_release(args.release, args)
     elif args.dev_set:
         files = from_dev_set(args.dev_set, args)
@@ -228,14 +238,16 @@ def main():
             die(f"no packages in build/artifacts/{args.os}; run ./build.sh --os {args.os} first")
 
     found = {parse(f)[1] for f in files}
-    expected = args.only or set(PACKAGE_COMPONENT.values())
-    if expected - found:
-        print("WARNING: no packages for " + ", ".join(sorted(expected - found)))
-    if args.os == "ol10" and not args.only:
-        files.update(grpc(args))
+    expected = args.only or set(PACKAGE_COMPONENT.values()) - {"grpc"}
+    if not args.grpc and expected - found - {"grpc"}:
+        print("WARNING: no packages for " + ", ".join(sorted(expected - found - {"grpc"})))
+    if args.os == "ol10" and not args.only and not args.grpc and "grpc" not in found:
+        print("WARNING: no cognos-grpc in these packages (sets published before it was added, or a local build); "
+              "the playbooks need it on ol10. Add it with: fetch-packages.py --os ol10 --grpc (needs the lab network)")
 
     DEST.mkdir(parents=True, exist_ok=True)
-    for old in sorted(DEST.glob("cognos-*" + SUFFIX[args.os])):
+    # --grpc adds to what is there: it replaces only an older cognos-grpc.
+    for old in sorted(DEST.glob(("cognos-grpc*" if args.grpc else "cognos-*") + SUFFIX[args.os])):
         print(f"  removed old {old.name}")
         old.unlink()
     for name, data in sorted(files.items()):

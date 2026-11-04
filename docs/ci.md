@@ -177,6 +177,9 @@ A dev set is a complete set of Cognos packages, every component for ubuntu24 and
 - Sets are created in pipeline order (`resource_group: dev-set`). If an older pipeline would still finish after a
   newer one, `ci/dev-set.py` refuses to replace the newer set and that job fails.
 - Dev sets are stored only in GitLab, as job artifacts; nothing is published to Nexus or to the package registry.
+- ol10 needs `cognos-grpc`, which is not built in this repository. "publish dev set" adds the version pinned in
+  `fetch-packages.py` (`GRPC_VERSION`) from Nexus to the ol10 part of the set (`ci/dev-set.py --extra`), so that a
+  deployment needs nothing but GitLab. If Nexus does not answer, the set keeps the previous set's `cognos-grpc`.
 - A merge request's packages are the artifacts of its build jobs (14 days): `fetch-packages.py --pipeline <id>`
   deploys them, with the newest dev set for the components the merge request did not build.
 
@@ -194,7 +197,7 @@ repositories' imported tags (so the first 1.6 release is `v1.6.3`).
 | 1. Propose | propose release | by hand, on any `main` pipeline | compares the newest dev set with the last release of the line (`ci/compat-check.sh`) and opens or updates one merge request from `release-bot/next` setting `VERSION` to the next `X.Y`: major if a public interface broke, else minor |
 | 2. Review | you | | merge it, or first edit `VERSION` in it to release a different version |
 | 3. Create | create release | the `main` push that changed `VERSION`; or by hand for the current line (the first release) | creates `release/X.Y`, the tag `vX.Y.P` and the label `backport-X.Y` |
-| 4. Publish | publish release | every `vX.Y.Z` tag pipeline, after every component built and tested on both OSes | uploads the packages and `set.json` to the package registry (`cognos/X.Y.Z`, kept permanently) and creates the GitLab release |
+| 4. Publish | publish release | every `vX.Y.Z` tag pipeline, after every component built and tested on both OSes | adds `cognos-grpc` for ol10 (pinned, from Nexus; without it the job fails), uploads the packages, `set.json` and one `cognos-X.Y.Z-<os>.zip` per OS to the package registry (`cognos/X.Y.Z`, kept permanently), and creates the GitLab release (Deploy → Releases) linking them |
 | 5. Backport | backport | every `main` push | for a merged merge request labelled `backport-X.Y`: cherry-picks it onto `release/X.Y` and opens a merge request into it; on a conflict it comments on the merge request and fails, and the backport is done by hand |
 | 6. Patch | tag patch | every push to `release/X.Y` (e.g. a merged backport) | tags `vX.Y.(P+1)` unless the commit is tagged, which runs step 4 |
 

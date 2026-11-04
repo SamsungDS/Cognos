@@ -292,18 +292,31 @@ def publish_release(args):
     release_set = json.loads((directory / "set.json").read_text())
     base = f"/packages/generic/cognos/{version}"
     links = []
-    for file in ["set.json"] + [p["file"] for p in release_set["packages"]]:
-        name = pathlib.PurePath(file).name
-        request("PUT", f"{base}/{quote(name)}", raw=(directory / file).read_bytes(), job_token=True)
+
+    def upload(name, data):
+        request("PUT", f"{base}/{quote(name)}", raw=data, job_token=True)
         links.append({"name": name, "url": f"{API}/projects/{PROJECT}{base}/{quote(name)}", "link_type": "package"})
+
+    # One download per OS: cognos-<version>-<os>.zip with that OS's packages (ol10 with cognos-grpc) and set.json.
+    for os_name in sorted({p["os"] for p in release_set["packages"]}):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(directory / "set.json", "set.json")
+            for package in release_set["packages"]:
+                if package["os"] == os_name:
+                    z.write(directory / package["file"], package["file"])
+        upload(f"cognos-{version}-{os_name}.zip", archive.getvalue())
+    for file in ["set.json"] + [p["file"] for p in release_set["packages"]]:
+        upload(pathlib.PurePath(file).name, (directory / file).read_bytes())
     print(f"Uploaded {len(links)} files to the package registry: cognos/{version}")
     if request("GET", f"/releases/{quote(tag)}", job_token=True, ok_missing=True):
         print(f"Release {tag} already exists; packages re-uploaded.")
         return
     request("POST", "/releases", {
         "tag_name": tag, "name": f"Cognos {version}",
-        "description": f"Cognos {version}: packages for ubuntu24 and ol10. `set.json` lists every file with its "
-                       f"sha256. Deploy with `deploy/scripts/fetch-packages.py --release {tag}`.",
+        "description": f"Cognos {version}: packages for ubuntu24 and ol10. `cognos-{version}-<os>.zip` holds all of "
+                       f"one OS's packages (ol10 with cognos-grpc) and `set.json`, which lists every file with its "
+                       f"sha256. Or deploy with `deploy/scripts/fetch-packages.py --os <os> --release {tag}`.",
         "assets": {"links": links}}, job_token=True)
     print(f"Created release {tag}")
 
