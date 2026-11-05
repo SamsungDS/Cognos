@@ -243,7 +243,7 @@ The sync uses `RELEASE_BOT_TOKEN`: its merge requests and merge commits are made
 
 | Host | Group | What it runs |
 |---|---|---|
-| `DEPLOY_MANAGEMENT_SERVER`, default `msl-ssg-vm22.msl.lab` | `management_server` | controller, REST server (port 8001), node |
+| `DEPLOY_MANAGEMENT_SERVER`, default `msl-ssg-vm22.msl.lab` | `management_server` | controller (port 9999), REST server (port 8001) |
 | `DEPLOY_APPLICATION_SERVER`, default `msl-ssg-srf06.msl.lab` | `application_server` | node, svc-mgr, cmmh driver, the real cxl (srf06 has CXL devices) |
 
 `deploy/scripts/test-deploy.sh` does the work:
@@ -251,8 +251,11 @@ The sync uses `RELEASE_BOT_TOKEN`: its merge requests and merge commits are made
 1. Records each host's state: packages, systemd units, Cognos folders, users, `ld.so.conf.d`, ufw.
 2. Deploys this pipeline's ubuntu24 packages (`fetch-packages.py --pipeline`, completed from the newest dev set) with
    `playbooks/deploy_cognos.yml`, without the GUI and RBAC. The playbook removes any earlier Cognos first.
-3. Checks that the services run on both hosts and that the REST API answers. The start roles do not fail when a
-   service does not start, so this check is what tells.
+3. Waits 10 s, then checks, retrying each check for up to 60 s: the controller and the REST server run on the
+   management server; the node, svc-mgr and cmmh driver run on the application server; and the application server
+   reaches the management server's controller (port 9999) and REST API (port 8001) at the address they listen on.
+   A unit that is not active has its last journal lines printed. The start roles do not fail when a service does not
+   start, so this check is what tells.
 4. Always, also when 2 or 3 failed: `playbooks/remove_cognos.yml`, then purges every package the deployment added and
    what ansible left behind.
 5. Compares with step 1. Anything the deployment added that is still there fails the job; anything that was there before

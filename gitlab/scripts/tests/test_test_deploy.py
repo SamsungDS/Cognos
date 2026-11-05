@@ -18,8 +18,17 @@ case $cmd in
     elif [ -e "$FAKE/removed" ]; then cat "$FAKE/$host.removed"
     else cat "$FAKE/$host.before"; fi ;;
   *apt-get\ purge*) touch "$FAKE/$host.purged-done"; echo "$cmd" > "$FAKE/$host.purge-command" ;;
-  *is-active*) case " $FAKE_INACTIVE " in *" $host:${cmd##* } "*) exit 3 ;; esac ;;
-  *curl*) echo 200 ;;
+  *is-active*)
+    unit=${cmd##* }
+    case " $FAKE_INACTIVE " in *" $host:$unit "*) exit 3 ;; esac
+    # FAKE_SLOW: inactive on the first two checks, active from the third on.
+    case " $FAKE_SLOW " in *" $host:$unit "*)
+      n=$(cat "$FAKE/slow-$unit" 2>/dev/null || echo 0); echo $((n + 1)) > "$FAKE/slow-$unit"
+      [ "$n" -ge 2 ] || exit 3 ;; esac ;;
+  *journalctl*) echo "journal of ${cmd##*-u }" ;;
+  *ip\ -4\ route\ get*) echo "1.1.1.1 via 10.0.0.1 dev eth0 src 10.0.0.5 uid 0" ;;
+  */dev/tcp/*) case " $FAKE_UNREACHABLE " in *" 9999 "*) exit 1 ;; esac ;;
+  *curl*) case " $FAKE_UNREACHABLE " in *" 8001 "*) echo 000; exit 7 ;; esac; echo 200 ;;
 esac
 exit 0
 """
@@ -73,7 +82,8 @@ class TestDeployTest(TempDirTestCase):
     def run_test(self, *extra, **env):
         result = sh(str(self.root / "deploy/scripts/test-deploy.sh"), "--management", M, "--application", A,
                     "--key", str(self.key), *extra, check=False,
-                    env=self.env(FAKE=self.fake, COLLECTION_RETRY_DELAY=0, **env))
+                    env=self.env(**{"FAKE": self.fake, "COLLECTION_RETRY_DELAY": 0, "CHECK_WAIT": 0,
+                                    "CHECK_TIMEOUT": 0, "CHECK_INTERVAL": 0, **env}))
         calls = (self.fake / "calls").read_text().splitlines() if (self.fake / "calls").exists() else []
         return result, calls
 
@@ -102,7 +112,50 @@ class TestDeployTest(TempDirTestCase):
         result, calls = self.run_test(FAKE_INACTIVE=f"{A}:cognos-svc-mgr")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"{A}: cognos-svc-mgr NOT active", result.stdout)
+        self.assertIn("journal of cognos-svc-mgr", result.stdout)
         self.assertEqual(self.playbooks(calls)[-1], "remove_cognos.yml")
+
+    def test_services_checked_where_they_run(self):
+        # Controller and REST server on the management server; the node only on the application server.
+        result, calls = self.run_test()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        checked = {(c.split()[1], c.split()[-1]) for c in calls if "is-active" in c}
+        self.assertEqual(checked, {(M, "cognos-controller"), (M, "cognos-restserver"), (A, "cmmh_driver"),
+                                   (A, "cognos-node"), (A, "cognos-svc-mgr")})
+
+    def test_application_server_reaches_the_management_server(self):
+        result, calls = self.run_test()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        # From the application server, to the address the management server's services listen on.
+        from_app = [c for c in calls if c.startswith(f"ssh {A} ")]
+        self.assertTrue(any("/dev/tcp/10.0.0.5/9999" in c for c in from_app), calls)
+        self.assertTrue(any("http://10.0.0.5:8001/" in c for c in from_app), calls)
+        self.assertIn(f"{A} -> {M} (10.0.0.5): controller port 9999 reachable", result.stdout)
+        self.assertIn(f"{A} -> {M} (10.0.0.5): REST API answers on port 8001 (HTTP 200)", result.stdout)
+
+    def test_unreachable_controller_or_rest_fails_but_cleans_up(self):
+        for port in ("9999", "8001"):
+            with self.subTest(port=port):
+                (self.fake / "removed").unlink(missing_ok=True)
+                for f in self.fake.glob("*.purged-done"):
+                    f.unlink()
+                result, calls = self.run_test(FAKE_UNREACHABLE=port)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(f"port {port}", result.stdout)
+                self.assertIn("NOT", result.stdout.split("== removing")[0])
+                self.assertEqual(self.playbooks(calls)[-1], "remove_cognos.yml")
+
+    def test_a_service_slow_to_come_up_passes(self):
+        result, _ = self.run_test(FAKE_SLOW=f"{A}:cognos-node", CHECK_TIMEOUT="30")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.fake / "slow-cognos-node").read_text().strip(), "3")
+        self.assertIn(f"{A}: cognos-node active", result.stdout)
+
+    def test_waits_before_checking(self):
+        result, calls = self.run_test(CHECK_WAIT="1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("== waiting 1 s for the services to come up", result.stdout)
+        self.assertLess(result.stdout.index("== waiting"), result.stdout.index("== checking the deployment"))
 
     def test_anything_left_behind_fails(self):
         self.state(A, "purged", "pkg base\npath /etc/svk\nuser root\n")

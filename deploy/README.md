@@ -301,7 +301,8 @@ The same playbooks deploy to the machine they run on. It must run Ubuntu 24.04 o
 ### Test a deployment and remove it again
 
 `scripts/test-deploy.sh` deploys the stack to a management server and an application server, checks that the
-services run and the REST API answers, then removes everything and checks that nothing is left on either machine:
+services run and that the application server reaches the management server's controller and REST API, then removes
+everything and checks that nothing is left on either machine:
 
     deploy/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key> [--mock]
 
