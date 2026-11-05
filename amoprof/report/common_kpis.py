@@ -469,6 +469,15 @@ except Exception:  # pragma: no cover - standalone/bundled execution
         counter_window_total as _k_counter_total,
         window_counter_delta as _k_window_counter_delta)
 
+try:
+    from amoprof.report.metric_formulas import formula_details as _fx_details
+except Exception:  # pragma: no cover - standalone/bundled execution
+    try:
+        from metric_formulas import formula_details as _fx_details  # type: ignore
+    except Exception:
+        def _fx_details(body, label="formula", open_=False):  # type: ignore
+            return body or ""
+
 
 def _delta(rows: list[dict[str, Any]], *partials: str) -> float:
     """Window delta of the first column matching *partials*."""
@@ -1437,7 +1446,11 @@ def _replace_kpi_value_by_label(report_html: str, label_variants: list[str], key
         )
 
         def repl2(m):
-            note_div = f'<div style="font-size:10px;color:#64748b;margin-top:2px">{_html.escape(note)}</div>'
+            # Collapsed, as kv_card renders it: a plain div here left the
+            # rewritten tiles (TTFT, TPOT, throughput) with their formula
+            # printed in full beside sibling tiles showing only the pill.
+            note_div = ('<div style="font-size:10px;color:#64748b;margin-top:2px">'
+                        f'{_fx_details(_html.escape(note))}</div>')
             return f"{m.group(1)}{repl_label}{m.group(2)}{val_txt}{unit_span}{m.group(4)}{note_div}{m.group(6)}"
 
         out = pat2.sub(repl2, out)
