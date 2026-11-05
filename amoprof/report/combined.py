@@ -8308,7 +8308,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # request list so a Prometheus-sourced CSV that *does* carry
             # cumulative byte counters still works.
             "rd_bw_mbs", "wr_bw_mbs",
-            "read_bytes", "write_bytes",
+            "read_bytes", "write_bytes", "rd_bytes", "wr_bytes",
             "rd_iops", "wr_iops", "read_iops", "write_iops",
             "rd_lat_ms", "wr_lat_ms", "read_lat_ms", "write_lat_ms",
             "r_await", "w_await", "await",
@@ -8321,11 +8321,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _nvme_wr_mbps = list(_nvme_raw.get("wr_bw_mbs") or [])
         _nvme_rd_bw_t = list(_nvme_time)
         _nvme_wr_bw_t = list(_nvme_time)
-        if not _nvme_rd_mbps and _nvme_raw.get("read_bytes"):
-            _nvme_rd_bw_t, _rd_rate = _rate_with_time(_nvme_raw["read_bytes"], _nvme_time)
+        # A Prometheus-sourced CSV names its counters rd_bytes / wr_bytes (the
+        # Interactive tab's spelling).  Only read_bytes / write_bytes were
+        # tried, so such a run had no L3 line here while Interactive charted
+        # L3 bandwidth from the same file.
+        _rd_bytes = _nvme_raw.get("read_bytes") or _nvme_raw.get("rd_bytes")
+        _wr_bytes = _nvme_raw.get("write_bytes") or _nvme_raw.get("wr_bytes")
+        if not _nvme_rd_mbps and _rd_bytes:
+            _nvme_rd_bw_t, _rd_rate = _rate_with_time(_rd_bytes, _nvme_time)
             _nvme_rd_mbps = [v / 1e6 for v in _rd_rate]
-        if not _nvme_wr_mbps and _nvme_raw.get("write_bytes"):
-            _nvme_wr_bw_t, _wr_rate = _rate_with_time(_nvme_raw["write_bytes"], _nvme_time)
+        if not _nvme_wr_mbps and _wr_bytes:
+            _nvme_wr_bw_t, _wr_rate = _rate_with_time(_wr_bytes, _nvme_time)
             _nvme_wr_mbps = [v / 1e6 for v in _wr_rate]
 
         # IOPS — collector emits per-sample gauge already (rd_iops/wr_iops),
