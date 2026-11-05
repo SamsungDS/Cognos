@@ -12,7 +12,10 @@
 # The packages must already be in deploy/artifacts/SVK/ (deploy/scripts/fetch-packages.py). Steps:
 #   1. record each host's state: packages, systemd units, Cognos folders, users, ld.so.conf.d, ufw
 #   2. playbooks/deploy_cognos.yml (it first removes any existing Cognos, then installs and starts)
-#   3. check the services and the REST API (the start roles do not fail when a service does not start)
+#   3. wait CHECK_WAIT seconds (default 10), then check, retrying each check for up to CHECK_TIMEOUT seconds
+#      (default 60): the controller and the REST server run on the management server, the node, svc-mgr and the
+#      cmmh driver on the application server, and the application server reaches the management server's controller
+#      (port 9999) and REST API (port 8001). The start roles do not fail when a service does not start.
 #   4. always, also when 2 or 3 failed: playbooks/remove_cognos.yml, purge every package the deploy added,
 #      remove what ansible left behind
 #   5. compare with 1: anything added and still there fails the run. Anything that was there before and is gone is
@@ -22,11 +25,13 @@
 # Before step 1 it installs the ansible collections (deploy/collections/requirements.yml) from Ansible Galaxy, with
 # retries: the lab network drops connections now and then. If that fails, the hosts are not touched.
 #
-# Needs ansible and ssh. COLLECTION_RETRY_DELAY (seconds between attempts, default 30) is for the tests.
+# Needs ansible and ssh. COLLECTION_RETRY_DELAY (seconds between attempts, default 30) and CHECK_INTERVAL (seconds
+# between check attempts, default 5) are for the tests.
 set -euo pipefail
 
 DEPLOY=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 MANAGEMENT='' APPLICATION='' KEY='' MOCK=false
+CHECK_WAIT=${CHECK_WAIT:-10} CHECK_TIMEOUT=${CHECK_TIMEOUT:-60} CHECK_INTERVAL=${CHECK_INTERVAL:-5}
 
 die() {
     echo "test-deploy.sh: $*" >&2
@@ -94,33 +99,71 @@ playbook() {
         -e "{\"scmc_cxl_mock_enable\": $MOCK, \"cognos_install_gui_enabled\": false, \"cognos_rbac_enabled\": false}")
 }
 
+# Retries "$@" every CHECK_INTERVAL seconds until it succeeds or CHECK_TIMEOUT seconds have passed: services take
+# a while to come up after the playbook started them.
+eventually() {
+    local deadline=$((SECONDS + CHECK_TIMEOUT))
+    until "$@"; do
+        [[ $SECONDS -lt $deadline ]] || return 1
+        sleep "$CHECK_INTERVAL"
+    done
+}
+
 check_services() {
     local host=$1 unit ok=0
     shift
     for unit in "$@"; do
-        if remote "$host" systemctl is-active --quiet "$unit"; then
+        if eventually remote "$host" systemctl is-active --quiet "$unit"; then
             echo "  $host: $unit active"
         else
-            echo "  $host: $unit NOT active"
+            echo "  $host: $unit NOT active after ${CHECK_TIMEOUT} s; its last journal lines:"
+            remote "$host" journalctl -u "$unit" -n 20 --no-pager | indent || true
             ok=1
         fi
     done
     return "$ok"
 }
 
+# Any HTTP answer from the REST server at $1, as the application server sees it; sets code.
+rest_answers() {
+    code=$(remote "$APPLICATION" curl -s -o /dev/null -w '%{http_code}' --max-time 10 "http://$1:8001/" || true)
+    [[ -n $code && $code != 000 ]]
+}
+
+# The application server connects to the management server's controller (gRPC) and REST server. Both listen on
+# the management server's default IPv4 address (ansible_default_ipv4 in the start roles), not on localhost.
+reach() {
+    local address=$1 code
+    if eventually remote "$APPLICATION" timeout 5 bash -c "'exec 3<> /dev/tcp/$address/9999'"; then
+        echo "  $APPLICATION -> $MANAGEMENT ($address): controller port 9999 reachable"
+    else
+        echo "  $APPLICATION -> $MANAGEMENT ($address): controller port 9999 NOT reachable"
+        return 1
+    fi
+    if eventually rest_answers "$address"; then
+        echo "  $APPLICATION -> $MANAGEMENT ($address): REST API answers on port 8001 (HTTP $code)"
+    else
+        echo "  $APPLICATION -> $MANAGEMENT ($address): REST API does NOT answer on port 8001"
+        return 1
+    fi
+}
+
 check() {
-    local ok=0 code
+    local ok=0 address
+    echo "== waiting ${CHECK_WAIT} s for the services to come up"
+    sleep "$CHECK_WAIT"
     echo "== checking the deployment"
-    check_services "$MANAGEMENT" cognos-controller cognos-restserver cognos-node || ok=1
+    # The management server runs the controller and the REST server; the node runs on the application server.
+    check_services "$MANAGEMENT" cognos-controller cognos-restserver || ok=1
     local app_units=(cognos-node cognos-svc-mgr)
     [[ $MOCK == true ]] || app_units=(cmmh_driver "${app_units[@]}")
     check_services "$APPLICATION" "${app_units[@]}" || ok=1
-    code=$(remote "$MANAGEMENT" curl -s -o /dev/null -w '%{http_code}' --max-time 10 http://localhost:8001/ || true)
-    if [[ -n $code && $code != 000 ]]; then
-        echo "  $MANAGEMENT: REST API answers (HTTP $code)"
-    else
-        echo "  $MANAGEMENT: REST API does not answer on port 8001"
+    address=$(remote "$MANAGEMENT" ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+    if [[ -z $address ]]; then
+        echo "  $MANAGEMENT: could not find its default IPv4 address"
         ok=1
+    else
+        reach "$address" || ok=1
     fi
     return "$ok"
 }

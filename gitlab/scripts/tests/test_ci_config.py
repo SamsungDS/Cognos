@@ -49,6 +49,17 @@ class CiConfigTest(unittest.TestCase):
             with self.subTest(job=job):
                 self.assertRegex(rules, r"- if: \$CI_COMMIT_TAG\n\s+when: never")
 
+    def test_deploy_is_manual_and_stops_without_the_key(self):
+        block = CONFIG[CONFIG.index("\ndeploy cognos:"):]
+        block = block[:block.index("\n  script:")]
+        rules = block[block.index("  rules:"):block.index("  variables:")]
+        for source in (r'\$CI_COMMIT_BRANCH == "main"', r'\$CI_PIPELINE_SOURCE == "merge_request_event"'):
+            with self.subTest(rule=source):
+                self.assertRegex(rules, source + r".*\n\s+when: manual\n\s+allow_failure: true")
+        self.assertEqual(rules.count("when: manual"), rules.count("- if:"))
+        # A pipeline without the protected key fails at once, before any host is touched.
+        self.assertLess(block.index('if [ -z "${DEPLOY_SSH_KEY:-}" ]'), block.index("base64 -d"))
+
     def test_unit_tests_retry_once(self):
         block = CONFIG[CONFIG.index("\n.test:"):][:600]
         self.assertRegex(block, r"retry:\n\s+max: 1\n\s+when: \[script_failure\]")

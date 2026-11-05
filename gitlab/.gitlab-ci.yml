@@ -682,12 +682,22 @@ deploy cognos:
     - if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE =~ /^(push|web)$/
       when: manual
       allow_failure: true
+    # Offered in merge requests too, to test a change before it merges. It
+    # only works while DEPLOY_SSH_KEY is unprotected (see docs/ci.md).
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: manual
+      allow_failure: true
   variables:
     DEPLOY_MANAGEMENT_SERVER: msl-ssg-vm22.msl.lab
     DEPLOY_APPLICATION_SERVER: msl-ssg-srf06.msl.lab
     ANSIBLE_FORCE_COLOR: "true"
   before_script:
     - !reference [.internal-ca, before_script]
+    - |
+      if [ -z "${DEPLOY_SSH_KEY:-}" ]; then
+        echo "DEPLOY_SSH_KEY is not available to this pipeline: it is protected, so only main gets it (see docs/ci.md)"
+        exit 1
+      fi
     - DEPLOY_KEY=$(mktemp)
     - printf '%s' "$DEPLOY_SSH_KEY" | base64 -d > "$DEPLOY_KEY"
     - chmod 600 "$DEPLOY_KEY"
