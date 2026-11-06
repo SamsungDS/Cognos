@@ -123,6 +123,22 @@ except Exception:  # pragma: no cover - amoprof.py also runs as a script
             return body or ""
         _FX_CSS = _FX_CSS_LIGHT = ""  # type: ignore
 
+try:
+    from amoprof.config_checks import declared_benchmark as _declared_benchmark
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_cc
+        from pathlib import Path as _P_cc
+        _sys_cc.path.insert(0, str(_P_cc(__file__).resolve().parents[2]))
+        from amoprof.config_checks import declared_benchmark as _declared_benchmark
+    except Exception:
+        def _declared_benchmark(setup, cli_value=""):  # type: ignore
+            for _k in ("Application / Benchmark", "Benchmark", "Application"):
+                _v = str((setup or {}).get(_k, "") or "").strip()
+                if _v and _v.lower() not in ("unknown", "none", "n/a", "default"):
+                    return _v
+            return ""
+
 def _amoprof_numeric_series(values, default: float = float("nan")) -> pd.Series:
     """Coerce AMOprof report time-series values to float robustly.
 
@@ -8542,7 +8558,7 @@ def extract_metrics(data: dict) -> Metrics:
     m.setup_attention_backend = _first_sg("attention_backend", "attn_backend")
     m.setup_schedule_policy = _first_sg("schedule_policy", "scheduler_policy")
     m.setup_details = {
-        "Model": m.setup_model, "Runtime": m.setup_runtime, "Application / Benchmark": m.setup_details.get("Application / Benchmark", m.setup_details.get("Application", m.setup_details.get("Benchmark", m.setup_instance))),
+        "Model": m.setup_model, "Runtime": m.setup_runtime, "Application / Benchmark": (_declared_benchmark(m.setup_details) or "not declared"),
         "Job": m.setup_job, "Engine": m.setup_engine_type, "TP size": m.setup_tp_size,
         "dtype": m.setup_dtype, "KV dtype": m.setup_kv_cache_dtype,
         "Context length": m.setup_context_length, "Page size": m.setup_page_size,
@@ -8824,7 +8840,7 @@ def extract_metrics(data: dict) -> Metrics:
                         if vv:
                             setattr(m, attr, str(vv)); break
             m.setup_details.update({
-                "Model": m.setup_model, "Application / Benchmark": m.setup_details.get("Application / Benchmark", m.setup_details.get("Application", m.setup_details.get("Benchmark", m.setup_instance))), "Job": m.setup_job,
+                "Model": m.setup_model, "Application / Benchmark": (_declared_benchmark(m.setup_details) or "not declared"), "Job": m.setup_job,
                 "Engine": m.setup_engine_type, "Page size": m.setup_page_size,
                 "Num pages/tokens": m.setup_num_pages,
             })

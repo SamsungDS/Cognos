@@ -34,6 +34,22 @@ except Exception:
         reconcile_l3_io = None  # type: ignore
 
 try:
+    from amoprof.config_checks import declared_benchmark as _declared_benchmark
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_cc
+        from pathlib import Path as _P_cc
+        _sys_cc.path.insert(0, str(_P_cc(__file__).resolve().parents[2]))
+        from amoprof.config_checks import declared_benchmark as _declared_benchmark
+    except Exception:
+        def _declared_benchmark(setup, cli_value=""):  # type: ignore
+            for _k in ("Application / Benchmark", "Benchmark", "Application"):
+                _v = str((setup or {}).get(_k, "") or "").strip()
+                if _v and _v.lower() not in ("unknown", "none", "n/a", "default"):
+                    return _v
+            return ""
+
+try:
     from amoprof.report.common_kpis import (
         compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json,
         compute_cache_hit_kpis,
@@ -3174,11 +3190,9 @@ def build_report(raw_dir: Path, out_html: Path,
         setup["Default profile"] = "SGLang DeepSeek-R1-70B HiCache reference launch; defaulted fields are assumed, not observed"
         setup["Defaulted fields"] = ", ".join(defaulted)
 
-    # Prefer a user-facing application/benchmark label from setup_details.json;
-    # do not show Prometheus instance as a setup row.
-    app_bench = (setup.get("Application / Benchmark") or setup.get("Application") or
-                 setup.get("Benchmark") or setup.get("benchmark") or setup.get("application") or
-                 setup.get("Instance") or sglang_sum.get("instance") or "unknown")
+    # Only a declaration names the workload; the Prometheus instance it once
+    # fell back to is not one.
+    app_bench = _declared_benchmark(setup) or "not declared"
     setup["Application / Benchmark"] = app_bench
     setup.pop("Instance", None)
 

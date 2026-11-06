@@ -964,6 +964,55 @@ def _apply_explicit_model_to_setup(raw_dir: Path, args=None) -> None:
 
 
 def _copy_setup_details(args, raw_dir: Path) -> None:
+    """Copy --setup-details into raw/, then record --benchmark there."""
+    _copy_setup_details_file(args, raw_dir)
+    _apply_benchmark_to_setup(args, raw_dir)
+
+
+def _apply_benchmark_to_setup(args, raw_dir: Path) -> None:
+    """--benchmark wins over the setup file and over any inference."""
+    bench = str(getattr(args, "benchmark", "") or "").strip()
+    if not bench:
+        return
+    sd_path = raw_dir / "setup_details.json"
+    try:
+        sd = json.loads(sd_path.read_text(encoding="utf-8")) if sd_path.exists() else {}
+        if not isinstance(sd, dict):
+            sd = {}
+        sd["Application / Benchmark"] = bench
+        sd.pop("Application / Benchmark source", None)
+        _dflt = [x.strip() for x in str(sd.get("Defaulted fields", "") or "").split(",") if x.strip()]
+        if "Application / Benchmark" in _dflt:
+            sd["Defaulted fields"] = ", ".join(x for x in _dflt if x != "Application / Benchmark")
+        sd_path.write_text(json.dumps(sd, indent=2, default=str), encoding="utf-8")
+    except Exception as e:
+        log.warning("could not record --benchmark in setup_details: %s", e)
+
+
+def _check_config_or_stop(args, setup: dict, observed: "set | None", source: str) -> int:
+    """0 when the declared configuration holds, else log every problem and return 2."""
+    from .config_checks import check_config
+    issues = check_config(setup, benchmark=getattr(args, "benchmark", ""),
+                          observed_devices=observed, device_source=source)
+    if observed is None:
+        log.info("Config check: block devices could not be listed (%s); device names "
+                 "in the setup were not validated.", source)
+    for i in issues:
+        if not i.blocking:
+            log.warning("Config check: %s", i.render())
+    issues = [i for i in issues if i.blocking]
+    if not issues:
+        return 0
+    log.error("Configuration check failed — %d problem(s); nothing was collected or analysed:",
+              len(issues))
+    for i in issues:
+        log.error("  ✗ %s", i.render())
+    log.error("A wrong value here is copied into every report, and correcting it later "
+              "means rerunning the benchmark.")
+    return 2
+
+
+def _copy_setup_details_file(args, raw_dir: Path) -> None:
     """Copy --setup-details JSON into raw/setup_details.json so both the
     static and interactive reports can render the Setup / Server Configuration
     panel from the same canonical location.
@@ -2350,6 +2399,15 @@ def _wait_for_stop(args: argparse.Namespace, collectors: "dict[str, Any]") -> No
 def _collect(args: argparse.Namespace) -> int:
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
     _resolve_collect_path_args(args)
+
+    # Validate the declared configuration before touching the host: collect
+    # runs on the GPU node, so its own /sys/block is the device list.
+    from .config_checks import load_setup, local_block_devices
+    _rc_cfg = _check_config_or_stop(args, load_setup(getattr(args, "setup_details", "")),
+                                    local_block_devices() or None, "on this host")
+    if _rc_cfg:
+        return _rc_cfg
+
     output_base = Path(args.output_dir).expanduser().resolve()
 
     # v1.39.107: honor --output-dir directly.  Collection now writes:
@@ -3186,6 +3244,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Optional fallback setup_details.json. AMOprof now prefers "
                         "live SGLang server_info and generates raw/setup_details.json "
                         "from it automatically when --sglang-host/--sglang-port are set.")
+    c.add_argument("--benchmark", default="",
+                   help="The application / benchmark this run measures (e.g. \"AgentX + MLPerf\"). "
+                        "Optional; overrides \"Application / Benchmark\" in the setup details file. "
+                        "Without either, the run proceeds with a warning and the report says "
+                        "\"not declared\".")
     c.add_argument("--setup-details-override", action="store_true",
                    help="Allow manual --setup-details to replace server_info-derived setup_details.json.")
     c.add_argument("--server-info-url", default=os.environ.get("AMOPROF_SGLANG_SERVER_INFO_URL", ""),
@@ -3318,6 +3381,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Refetch SGLang server_info even if raw/server_info.json already exists.")
     a.add_argument("--setup-details", default="",
                    help="Optional fallback setup_details.json for offline analyze; server_info is preferred.")
+    a.add_argument("--benchmark", default="",
+                   help="The application / benchmark the analysed window measures (e.g. \"AgentX + MLPerf\"). "
+                        "Optional; overrides \"Application / Benchmark\" in the setup details. "
+                        "Without either, the run proceeds with a warning and the report says "
+                        "\"not declared\".")
     a.add_argument("--setup-details-override", action="store_true",
                    help="Allow manual --setup-details to replace server_info-derived setup_details.json.")
     a.add_argument("--prefer", default="local", choices=["local", "prometheus"],
@@ -4238,6 +4306,35 @@ def _analyze(args) -> int:
         log.error("analyze requires either --run-dir or --prometheus "
                   "(or both for merge mode). Use --help for options.")
         return 2
+
+    # ── 1b. Validate the declared configuration before any work ─────────────
+    # Devices come from node_exporter on the GPU host for the analysed window;
+    # with no Prometheus (or no node_exporter series) they are not checked.
+    from .config_checks import load_setup, prometheus_block_devices
+    _cfg_setup = load_setup(getattr(args, "setup_details", ""))
+    if not _cfg_setup and run_dir_arg:
+        try:
+            _, _cfg_raw, _ = _resolve_run_and_raw_dir(Path(run_dir_arg).expanduser().resolve(),
+                                                      create=False)
+            _cfg_setup = load_setup(str(_cfg_raw / "setup_details.json"))
+        except Exception:
+            _cfg_setup = {}
+    _cfg_devs, _cfg_host = None, (getattr(args, "prom_instance", "") or "").split(":")[0]
+    if prom_url and _cfg_host:
+        try:
+            import time as _tc
+            from .prometheus_source import parse_time_arg as _pta_c
+            _now_c = _tc.time()
+            _we_c = _pta_c(args.end, now=_now_c) if getattr(args, "end", None) else _now_c
+            _ws_c = _pta_c(args.start, now=_now_c) if getattr(args, "start", None) else _we_c - 3600
+            _cfg_devs = prometheus_block_devices(prom_url.split("/api/")[0], _cfg_host, _ws_c, _we_c)
+        except Exception as _ec:
+            log.debug("config check: device listing failed: %s", _ec)
+    _rc_cfg = _check_config_or_stop(
+        args, _cfg_setup, _cfg_devs,
+        f"on {_cfg_host} in the analysed window (node_exporter)" if _cfg_host else "for this run")
+    if _rc_cfg:
+        return _rc_cfg
 
     # ── 2. Determine the working run_dir and report_dir ─────────────────────
     # run_dir  = where raw data lives (source for the report builder)

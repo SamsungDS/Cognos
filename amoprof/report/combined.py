@@ -32,6 +32,22 @@ except Exception:  # direct-script fallback
     from l3_backend import resolve_l3_backend, reconcile_l3_io  # type: ignore
 
 try:
+    from amoprof.config_checks import declared_benchmark as _declared_benchmark
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_cc
+        from pathlib import Path as _P_cc
+        _sys_cc.path.insert(0, str(_P_cc(__file__).resolve().parents[2]))
+        from amoprof.config_checks import declared_benchmark as _declared_benchmark
+    except Exception:
+        def _declared_benchmark(setup, cli_value=""):  # type: ignore
+            for _k in ("Application / Benchmark", "Benchmark", "Application"):
+                _v = str((setup or {}).get(_k, "") or "").strip()
+                if _v and _v.lower() not in ("unknown", "none", "n/a", "default"):
+                    return _v
+            return ""
+
+try:
     from amoprof.report.common_kpis import (
         compute_common_kpis,
         apply_common_kpis_to_html,
@@ -4526,16 +4542,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             return sum(_col) / len(_col)
         return 0.0
 
-    benchmark = _pick(setup, ["Application / Benchmark","application_benchmark","Benchmark","benchmark","Application","application",
-                               "Workload","workload","Test","test","app","app_name",
-                               "Benchmark name","benchmark_name"],
-                      _pick(setup, ["Instance","instance","Server","server","endpoint"],
-                            _pick(sglang, ["instance"], "unknown")))
-    # Nothing names the workload explicitly on most runs, so infer it from
-    # evidence the run already carries rather than printing "unknown".  Order
-    # is most-specific first; each source is named in the setup table so the
-    # reader can tell an inference from a declaration.
-    if str(benchmark).strip().lower() in ("", "unknown", "none"):
+    # Only a declaration names the workload (--benchmark or the setup file).
+    # An inference -- or the Prometheus instance, the old fallback -- printed
+    # as the value read as fact: an AgentX + MLPerf run was headed
+    # "interactive serving".  An undeclared run says so, with the inference
+    # as a hint.
+    benchmark = _declared_benchmark(setup)
+    if not benchmark:
         _bench_src = ""
         # A benchmark harness leaves its own summary behind.
         for _f, _name in (("benchmark_summary.json", "bench_serving"),
@@ -4566,6 +4579,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _bench_src = f"inferred from p50 input {_in_p50:,.0f} tokens"
         if _bench_src:
             setup.setdefault("Application / Benchmark source", _bench_src)
+            benchmark = f"not declared (looks like {benchmark})"
+        else:
+            benchmark = "not declared"
     runtime   = _pick(setup, ["Runtime","runtime","engine","server_type"],
                       _pick(sglang, ["server_type","runtime"], "SGLang"))
     gpu_desc  = _pick(setup, ["GPU","gpu","Accelerator","hardware","accelerator","GPU model"], "unknown")
