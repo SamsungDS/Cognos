@@ -445,13 +445,18 @@ def _write_setup_details_from_server_info(args: argparse.Namespace, raw_dir: Pat
         info = _fetch_sglang_server_info(args)
         if not info:
             return False
+        # server_info echoes the launch arguments, --admin-api-key included;
+        # redacted before it is cached or turned into setup details.
+        from .redact import redact_obj
+        info = redact_obj(info)
         try:
             cache_path.write_text(json.dumps(info, indent=2, default=str), encoding="utf-8")
             log.info("Wrote SGLang server_info: %s", cache_path)
         except Exception as e:
             log.warning("failed to write server_info.json: %s", e)
 
-    setup = _server_info_to_setup_details(info, args)
+    from .redact import redact_obj as _redact_obj
+    setup = _redact_obj(_server_info_to_setup_details(_redact_obj(info), args))
     dst = raw_dir / "setup_details.json"
     if dst.exists() and not allow_overwrite and not bool(getattr(args, "setup_details_override", False)):
         return False
@@ -1039,6 +1044,9 @@ def _copy_setup_details_file(args, raw_dir: Path) -> None:
     except Exception as e:
         log.warning("--setup-details is not valid JSON: %s (%s)", src, e)
         return
+    # A setup file usually carries the launch command, --admin-api-key and all.
+    from .redact import redact_obj
+    payload = redact_obj(payload)
     dst = raw_dir / "setup_details.json"
     if dst.exists() and not bool(getattr(args, "setup_details_override", False)):
         # Keep existing values, but fill any key they lack from the manual
@@ -1063,7 +1071,7 @@ def _copy_setup_details_file(args, raw_dir: Path) -> None:
         if filled:
             existing.update({k: payload[k] for k in filled})
             try:
-                dst.write_text(json.dumps(existing, indent=2, default=str), encoding="utf-8")
+                dst.write_text(json.dumps(redact_obj(existing), indent=2, default=str), encoding="utf-8")
                 log.info("setup_details.json already exists; filled %d missing field(s) from "
                          "--setup-details %s. Use --setup-details-override to replace it.",
                          len(filled), src)
@@ -1071,7 +1079,8 @@ def _copy_setup_details_file(args, raw_dir: Path) -> None:
                 log.warning("setup details merge failed: %s", e)
         return
     try:
-        shutil.copyfile(src, dst)
+        # Written from the redacted payload, not copied byte for byte.
+        dst.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
         log.info("Copied manual setup details: %s → %s", src, dst)
     except Exception as e:
         log.warning("setup details copy failed: %s", e)

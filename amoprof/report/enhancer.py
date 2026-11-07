@@ -1555,6 +1555,13 @@ def enhance_report(html_path: Path,
     else:
         log.info("amoprof enhancer: file already enhanced — only theme refreshed")
 
+    # The enhancer adds its own setup panel (Prometheus URL row included), so
+    # it scrubs what it writes like every other report writer.
+    try:
+        from amoprof.redact import scrub_html as _scrub_html
+        html = _scrub_html(html, raw_dir)
+    except Exception as _e_rd:
+        log.warning("amoprof enhancer: redaction skipped: %s", _e_rd)
     html_path.write_text(html, encoding="utf-8")
     log.info("amoprof enhancer: wrote %s (%d KB, theme=%s)",
              html_path, len(html) // 1000, theme)

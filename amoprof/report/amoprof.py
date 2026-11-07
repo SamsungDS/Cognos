@@ -139,6 +139,18 @@ except Exception:  # pragma: no cover - report module run as a script
                     return _v
             return ""
 
+try:
+    from amoprof.redact import scrub_html as _scrub_html
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_rd
+        from pathlib import Path as _P_rd
+        _sys_rd.path.insert(0, str(_P_rd(__file__).resolve().parents[2]))
+        from amoprof.redact import scrub_html as _scrub_html
+    except Exception:
+        def _scrub_html(html, raw_dir=None, extra=None):  # type: ignore
+            return html
+
 def _amoprof_numeric_series(values, default: float = float("nan")) -> pd.Series:
     """Coerce AMOprof report time-series values to float robustly.
 
@@ -6425,6 +6437,8 @@ document.addEventListener("DOMContentLoaded", () => {{
             html = apply_common_kpis_to_html(html, Path(_rd), _common_kpis_for_html)
     except Exception:
         pass
+
+    html = _scrub_html(html, getattr(m, "_amoprof_raw_dir", "") or None)
 
     if output_path:
         Path(output_path).write_text(html, encoding="utf-8")
@@ -25122,6 +25136,7 @@ def main():
             except Exception:
                 pass
             html = _amoprof_storage_label_cleanup(html, getattr(m, "l3_backend_class", ""))
+            html = _scrub_html(html, getattr(m, "_amoprof_raw_dir", "") or None)
             html_path.write_text(html, encoding="utf-8")
             generated.append(html_path)
             print(f"      ✓ {html_path.name}  ({html_path.stat().st_size / _K_KB:.0f} KB)")

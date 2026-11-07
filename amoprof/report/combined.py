@@ -48,6 +48,18 @@ except Exception:  # pragma: no cover - report module run as a script
             return ""
 
 try:
+    from amoprof.redact import scrub_html as _scrub_html
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_rd
+        from pathlib import Path as _P_rd
+        _sys_rd.path.insert(0, str(_P_rd(__file__).resolve().parents[2]))
+        from amoprof.redact import scrub_html as _scrub_html
+    except Exception:
+        def _scrub_html(html, raw_dir=None, extra=None):  # type: ignore
+            return html
+
+try:
     from amoprof.report.common_kpis import (
         compute_common_kpis,
         apply_common_kpis_to_html,
@@ -15622,6 +15634,8 @@ def build_combined_report(
     # corrupt that payload and make the whole End Report tab disappear.  Child
     # reports handle zero/no-data L3 sections before embedding.
     combined = _amoprof_storage_label_cleanup(combined, l3_backend_class)
+    # Last step: no secret or Prometheus address from the run reaches the page.
+    combined = _scrub_html(combined, raw_dir)
     out_html.write_text(combined, encoding='utf-8')
     log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1000)
     return out_html

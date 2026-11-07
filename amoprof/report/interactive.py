@@ -50,6 +50,18 @@ except Exception:  # pragma: no cover - report module run as a script
             return ""
 
 try:
+    from amoprof.redact import scrub_html as _scrub_html
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_rd
+        from pathlib import Path as _P_rd
+        _sys_rd.path.insert(0, str(_P_rd(__file__).resolve().parents[2]))
+        from amoprof.redact import scrub_html as _scrub_html
+    except Exception:
+        def _scrub_html(html, raw_dir=None, extra=None):  # type: ignore
+            return html
+
+try:
     from amoprof.report.common_kpis import (
         compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json,
         compute_cache_hit_kpis,
@@ -4332,5 +4344,6 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         pass
     html = _amoprof_storage_label_cleanup(
         html, getattr(_l3_res, "backend_class", "") if _l3_res is not None else "")
+    html = _scrub_html(html, raw_dir)
     out_html.write_text(html, encoding="utf-8")
     return out_html
