@@ -43,9 +43,9 @@ class UpstreamTest(TempDirTestCase):
     def setUp(self):
         super().setUp()
         self.root = self.tmp / "root"
-        (self.root / "deploy/scripts").mkdir(parents=True)
+        (self.root / "deploy/ansible/scripts").mkdir(parents=True)
         shutil.copy2(REPO / "build.sh", self.root / "build.sh")
-        fetch = self.root / "deploy/scripts/fetch-packages.py"
+        fetch = self.root / "deploy/ansible/scripts/fetch-packages.py"
         fetch.write_text(FETCH)
         fetch.chmod(0o755)
         self.log = self.tmp / "apt.log"
@@ -60,7 +60,7 @@ class UpstreamTest(TempDirTestCase):
         return result.stdout, self.log.read_text() if self.log.exists() else ""
 
     def test_pipeline_packages_first(self):
-        d = self.root / "components/core/build/artifacts/ubuntu24"
+        d = self.root / "features/core/build/artifacts/ubuntu24"
         d.mkdir(parents=True)
         (d / "cognos-core_1.7.0~dev.0.mr3.9-ubuntu24.04_amd64.deb").write_text("pkg")
         out, apt = self.install_upstream()

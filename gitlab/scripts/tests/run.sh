@@ -14,7 +14,7 @@ cd "$ROOT"
 
 # The scripts the pipeline runs directly must be executable in git, not just on this disk.
 EXECUTABLES=(build.sh ci/version.sh ci/image.sh ci/dev-set.py ci/compat-check.sh gitlab/scripts/api.py
-    deploy/scripts/fetch-packages.py deploy/scripts/test-deploy.sh gitlab/scripts/tests/run.sh
+    deploy/ansible/scripts/fetch-packages.py deploy/ansible/scripts/test-deploy.sh gitlab/scripts/tests/run.sh
     gitlab/scripts/tests/smoke.sh)
 
 echo "== file modes"
@@ -29,7 +29,7 @@ done
 [[ $bad -eq 0 ]] || exit 1
 
 echo "== shellcheck"
-shellcheck build.sh ci/*.sh gitlab/scripts/tests/*.sh deploy/scripts/test-deploy.sh
+shellcheck build.sh ci/*.sh gitlab/scripts/tests/*.sh deploy/ansible/scripts/test-deploy.sh
 
 echo "== unit tests"
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover --buffer \

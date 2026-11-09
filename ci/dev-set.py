@@ -38,13 +38,13 @@ import shutil
 import sys
 
 COMPONENT_DIRS = {
-    "core": "components/core",
-    "mgmt-fw": "components/mgmt-fw",
-    "node": "components/node",
-    "ras": "components/ras",
-    "slat": "components/slat",
-    "me": "components/me",
-    "cxl": "components/cxl",
+    "core": "features/core",
+    "mgmt-fw": "features/mgmt-fw",
+    "node": "features/node",
+    "ras": "features/ras",
+    "slat": "features/slat",
+    "me": "features/me",
+    "cxl": "features/cxl",
     "sapp": "apps/sapp",
 }
 # Package name (without -dev/-devel) -> set component. cxl's two variants are separate components.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Puts the Cognos packages for one OS into deploy/artifacts/SVK/, where playbooks/deploy_cognos.yml installs them from.
+"""Puts the Cognos packages for one OS into deploy/ansible/artifacts/SVK/, where playbooks/deploy_cognos.yml installs them from.
 
-Usage: deploy/scripts/fetch-packages.py --os ubuntu24|ol10 [--mock] [--only <components>] [--with-dev] <source>
+Usage: deploy/ansible/scripts/fetch-packages.py --os ubuntu24|ol10 [--mock] [--only <components>] [--with-dev] <source>
 
 <source> is one of:
   --release vX.Y.Z       a release (kept permanently)
@@ -26,7 +26,7 @@ Environment (defaults in brackets):
   COGNOS_PROJECT      [dfs/svk/cognos]
   GITLAB_TOKEN        only needed if the project or its pipelines are not public
   NEXUS_URL           [http://ssg-nexus.msl.lab:8081], for --grpc only
-  ARTIFACTS_DIR       [deploy/artifacts/SVK]
+  ARTIFACTS_DIR       [deploy/ansible/artifacts/SVK]
 
 Needs only Python 3 and its standard library.
 """
@@ -47,11 +47,11 @@ import zipfile
 
 GRPC_VERSION = "1.59.2"
 
-ROOT = pathlib.Path(__file__).resolve().parents[2]
+ROOT = pathlib.Path(__file__).resolve().parents[3]   # deploy/ansible/scripts/ -> the repository root
 GITLAB = os.environ.get("COGNOS_GITLAB_URL", "https://cxl-gitlab.ssi.samsung.com")
 API = f"{GITLAB}/api/v4/projects/{urllib.parse.quote(os.environ.get('COGNOS_PROJECT', 'dfs/svk/cognos'), safe='')}"
 NEXUS = os.environ.get("NEXUS_URL", "http://ssg-nexus.msl.lab:8081").rstrip("/").removesuffix("/repository")
-DEST = pathlib.Path(os.environ.get("ARTIFACTS_DIR", ROOT / "deploy" / "artifacts" / "SVK"))
+DEST = pathlib.Path(os.environ.get("ARTIFACTS_DIR", ROOT / "deploy" / "ansible" / "artifacts" / "SVK"))
 SUFFIX = {"ubuntu24": ".deb", "ol10": ".rpm"}
 DEV_SET_JOB = "publish dev set"
 PACKAGE_COMPONENT = {

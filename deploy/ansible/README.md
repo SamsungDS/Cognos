@@ -1,4 +1,4 @@
-# Cognos Ansible README.md
+# Cognos Ansible
 
 ## Overview
 
@@ -149,9 +149,9 @@ Your inventory file should contain hosts in the following groups:
 
 ### IV. <a id="encrypt_pass">Encrypt ansible password with ansible-vault on ansible controller node</a>
 
-1. Enter $project_dir
+1. Enter $project_dir (`deploy/ansible` in this repository), from the repository root:
 
-        cd ./cognos-ansible
+        cd deploy/ansible
 
 2. Create a **passwords.yml** to store ansible password by ansible-vault
 
@@ -165,6 +165,38 @@ Your inventory file should contain hosts in the following groups:
         vault_ansible_password: '<your_ansible_password>'
 
     **Note:** '<your_ansible_password>' is the password for the 'ansible_user' specified in the 'hosts' inventory file.
+
+#### Passwords to set before deploying
+
+The repository does not contain working passwords. Two variables in `group_vars/all/all.yml` hold placeholder values and must be replaced before Cognos is deployed:
+
+| Variable | Used for | Placeholder |
+|---|---|---|
+| `influxdb_pwd` | Password of the InfluxDB user (`influxdb_user`, default `svk`) created when InfluxDB is set up on the management server. | `CHANGE_ME_INFLUXDB_PASSWORD` |
+| `rbac_password` | Password of the RBAC super administrator (`rbac_username`, default `super_admin`). Written to the RBAC service configuration as `SUPER_ADMIN_PASSWORD`. It must be at least 8 characters. | `CHANGE_ME_RBAC_PASSWORD` |
+
+Do not put real values in `all.yml` and do not commit them. Add them to the same vault file as the Ansible user's password, `group_vars/all/passwords.yml`:
+
+```bash
+cd deploy/ansible
+ansible-vault edit group_vars/all/passwords.yml    # use "ansible-vault create" if the file does not exist yet
+```
+
+```yaml
+---
+vault_ansible_password: "<your_ansible_password>"
+influxdb_pwd: "<your_influxdb_password>"
+rbac_password: "<your_rbac_password>"
+```
+
+Ansible loads the files in `group_vars/all/` in alphabetical order, so the values in `passwords.yml` override the placeholders in `all.yml`.
+
+Other ways to supply the values:
+
+- Pass an encrypted variables file with the same content: `ansible-playbook ... -e @secrets.yml --ask-vault-pass`.
+- In automation, write the three variables to `group_vars/all/passwords.yml` from protected, masked CI variables before running the playbook.
+
+The placeholders are not rejected automatically. If they are left unchanged, the InfluxDB user and the RBAC administrator are created with these placeholder passwords.
 
 ### V. <a id="prepare_artifacts">Prepare the artifacts</a>
 
@@ -185,20 +217,20 @@ which holds all of that OS's packages (ol10 with `cognos-grpc`) and `set.json`.
 
 | Packages from | Command, run from the repository root |
 |---|---|
-| A release (kept permanently) | `deploy/scripts/fetch-packages.py --os ubuntu24 --release v1.6.3` |
-| The newest dev set (built on `main`) | `deploy/scripts/fetch-packages.py --os ubuntu24 --set latest` |
-| The dev set of one `main` pipeline (kept for 10 days) | `deploy/scripts/fetch-packages.py --os ubuntu24 --set <pipeline id>` |
-| A merge request or any pipeline (components it did not build come from the newest dev set) | `deploy/scripts/fetch-packages.py --os ubuntu24 --pipeline <pipeline id>` |
-| Your own build (`./build.sh --os ubuntu24`) | `deploy/scripts/fetch-packages.py --os ubuntu24 --local` |
+| A release (kept permanently) | `deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --release v1.6.3` |
+| The newest dev set (built on `main`) | `deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --set latest` |
+| The dev set of one `main` pipeline (kept for 10 days) | `deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --set <pipeline id>` |
+| A merge request or any pipeline (components it did not build come from the newest dev set) | `deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --pipeline <pipeline id>` |
+| Your own build (`./build.sh --os ubuntu24`) | `deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --local` |
 
 The pipeline id is shown on the merge request's or the commit's pipeline page. Dev sets are described in
-[docs/ci.md](../docs/ci.md#dev-sets). Downloads need no token while the project and its pipelines are public;
-otherwise export `GITLAB_TOKEN`. Run `deploy/scripts/fetch-packages.py -h` for all options.
+[docs/ci.md](../../docs/ci.md#dev-sets). Downloads need no token while the project and its pipelines are public;
+otherwise export `GITLAB_TOKEN`. Run `deploy/ansible/scripts/fetch-packages.py -h` for all options.
 
 #### From a release bundle or Nexus
 
-1. Enter $project_dir and create a directory named artifacts.
-    * cd ./cognos-ansible
+1. Enter $project_dir (`deploy/ansible`, from the repository root) and create a directory named artifacts.
+    * cd deploy/ansible
     * mkdir artifacts
 2. Download the cognos packages into artifacts directory.
     * Alternatively, fetch the packages from Nexus for the target OS, e.g. for Ubuntu 24.04: `bash scripts/release.sh --os ubuntu24`
@@ -280,7 +312,7 @@ The same playbooks deploy to the machine they run on. It must run Ubuntu 24.04 o
 1. [Put the packages into `artifacts/SVK/`](#prepare_artifacts), for example from your own build:
 
         ./build.sh --os ubuntu24
-        deploy/scripts/fetch-packages.py --os ubuntu24 --local
+        deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --local
 
 2. Create an inventory, e.g. `local_hosts`, with this machine in both groups:
 
@@ -304,10 +336,10 @@ The same playbooks deploy to the machine they run on. It must run Ubuntu 24.04 o
 services run and that the application server reaches the management server's controller and REST API, then removes
 everything and checks that nothing is left on either machine:
 
-    deploy/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key> [--mock]
+    deploy/ansible/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key> [--mock]
 
 The CI job "deploy cognos" runs it by hand on `main` pipelines; see "Deploy to the lab" in
-[docs/ci.md](../docs/ci.md#deploy-to-the-lab).
+[docs/ci.md](../../docs/ci.md#deploy-to-the-lab).
 
 ### Manage Cognos Services After Deployment
 

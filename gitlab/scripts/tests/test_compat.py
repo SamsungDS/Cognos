@@ -16,7 +16,7 @@ class CompatTest(TempDirTestCase):
         super().setUp()
         self.stub("buf", BUF)
         self.stub("abidiff", ABIDIFF)
-        self.work = self.repo(["ci/compat-check.sh", "components/mgmt-fw/proto/framework/framework.proto"])
+        self.work = self.repo(["ci/compat-check.sh", "features/mgmt-fw/proto/framework/framework.proto"])
         git(self.work, "tag", "v1.6.3")
         self.old = self.package("old", "libsvkcore.so.1.6.3")
         self.new = self.package("new", "libsvkcore.so.1.7.0")

@@ -2,14 +2,14 @@
 # Deploys the whole Cognos stack to a management server and an application server with the playbooks, checks that
 # it runs, then removes it and checks that nothing of it is left on either machine.
 #
-# Usage: deploy/scripts/test-deploy.sh --management <host> --application <host> --key <ssh key file> [--mock]
+# Usage: deploy/ansible/scripts/test-deploy.sh --management <host> --application <host> --key <ssh key file> [--mock]
 #
 #   --management   host for the management_server group (controller, REST server)
 #   --application  host for the application_server group (node, svc-mgr, cmmh driver, feature modules)
 #   --key          SSH private key that logs in as root on both hosts
 #   --mock         the cxl mock (for an application server without CXL devices)
 #
-# The packages must already be in deploy/artifacts/SVK/ (deploy/scripts/fetch-packages.py). Steps:
+# The packages must already be in deploy/ansible/artifacts/SVK/ (deploy/ansible/scripts/fetch-packages.py). Steps:
 #   1. record each host's state: packages, systemd units, Cognos folders, users, ld.so.conf.d, ufw
 #   2. playbooks/deploy_cognos.yml (it first removes any existing Cognos, then installs and starts)
 #   3. wait CHECK_WAIT seconds (default 10), then check, retrying each check for up to CHECK_TIMEOUT seconds
@@ -22,7 +22,7 @@
 #      only reported (on the first run, for example, an older Cognos installation).
 # Exit 0 only if the deploy, the checks and the cleanup all succeeded.
 #
-# Before step 1 it installs the ansible collections (deploy/collections/requirements.yml) from Ansible Galaxy, with
+# Before step 1 it installs the ansible collections (deploy/ansible/collections/requirements.yml) from Ansible Galaxy, with
 # retries: the lab network drops connections now and then. If that fails, the hosts are not touched.
 #
 # Needs ansible and ssh. COLLECTION_RETRY_DELAY (seconds between attempts, default 30) and CHECK_INTERVAL (seconds
@@ -59,7 +59,7 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 [[ -n $MANAGEMENT && -n $APPLICATION && -f $KEY ]] || die "--management, --application and --key are required (see -h)"
-compgen -G "$DEPLOY/artifacts/SVK/cognos-*.deb" > /dev/null || die "no packages in deploy/artifacts/SVK (fetch-packages.py first)"
+compgen -G "$DEPLOY/artifacts/SVK/cognos-*.deb" > /dev/null || die "no packages in deploy/ansible/artifacts/SVK (fetch-packages.py first)"
 
 WORK=$(mktemp -d)
 INVENTORY="$DEPLOY/hosts.test-deploy"   # next to group_vars/ and artifacts/, which the playbooks find from it
@@ -93,7 +93,7 @@ state() {
 }
 
 # ANSIBLE_CONFIG explicitly: ansible ignores an ansible.cfg in a world-writable directory, which a CI checkout
-# can be, and without it does not find deploy/roles.
+# can be, and without it does not find deploy/ansible/roles.
 playbook() {
     (cd "$DEPLOY" && ANSIBLE_CONFIG="$DEPLOY/ansible.cfg" ansible-playbook -i "$INVENTORY" "playbooks/$1" \
         -e "{\"scmc_cxl_mock_enable\": $MOCK, \"cognos_install_gui_enabled\": false, \"cognos_rbac_enabled\": false}")

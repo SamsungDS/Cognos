@@ -10,8 +10,8 @@
 | `ci/compat-check.sh` | proposes a major or minor release (buf, abidiff) | no |
 | `gitlab/scripts/api.py` | the GitLab API calls: job results, release branches, tags, merge requests, backports, release upload | yes |
 | `gitlab/scripts/tests/` | tests of all of the above: `run.sh` (file modes, shellcheck, unit tests) and `smoke.sh` | the smoke tests only |
-| `deploy/scripts/test-deploy.sh` | deploys the stack to two hosts with the playbooks, checks it, removes it and checks that nothing is left | no |
-| `deploy/scripts/fetch-packages.py` | puts the packages of a release, a dev set, a pipeline or a local build into `deploy/artifacts/SVK/` | uses the GitLab API to download |
+| `deploy/ansible/scripts/test-deploy.sh` | deploys the stack to two hosts with the playbooks, checks it, removes it and checks that nothing is left | no |
+| `deploy/ansible/scripts/fetch-packages.py` | puts the packages of a release, a dev set, a pipeline or a local build into `deploy/ansible/artifacts/SVK/` | uses the GitLab API to download |
 
 One pipeline per event, no child pipelines. `gitlab/.gitlab-ci.yml` has seven sections: includes and workflow, what a
 change rebuilds, job templates, one block per component with all of its jobs, the dev set, releases, and other
@@ -31,10 +31,10 @@ jobs.
 
 ## What a change rebuilds
 
-- A change under `components/core`, `components/mgmt-fw`, `gitlab/`, `ci/`, `VERSION` or `build.sh` (`.rebuild-all`)
+- A change under `features/core`, `features/mgmt-fw`, `gitlab/`, `ci/`, `VERSION` or `build.sh` (`.rebuild-all`)
   builds and tests every component.
 - A change in one component's folder builds and tests only that component.
-- amo-prof and `deploy/` run only when their own folder changes.
+- amo-prof and `deploy/ansible/` run only when their own folder changes.
 - Anything else (docs, the `cama` submodule bump) builds nothing; only "check version" runs, and on `main` also
   "publish dev set", which then republishes the previous set unchanged.
 - Tag, schedule and web pipelines run every job, except that tag pipelines skip "test amo-prof" and the ansible jobs
@@ -57,7 +57,7 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | sync components | release | nightly schedule or by hand, with `SYNC_COMPONENTS=true` ([Sync](#sync)) |
 | test ci | test | the tests of the CI scripts ([Tests of the CI scripts](#tests-of-the-ci-scripts)) |
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
-| build ansible image, lint ansible | build-images, test | lint `deploy/` |
+| build ansible image, lint ansible | build-images, test | lint `deploy/ansible/` |
 
 Components: core, mgmt-fw, node, ras, slat, me, cxl and sapp. cama is not built here.
 
@@ -153,7 +153,7 @@ Nexus, so a local Docker build needs the lab network.
 ## Dev sets
 
 A dev set is a complete set of Cognos packages, every component for ubuntu24 and ol10, built on `main`. It is what
-`deploy/scripts/fetch-packages.py --set` deploys.
+`deploy/ansible/scripts/fetch-packages.py --set` deploys.
 
 - "publish dev set" runs in every `main` push, scheduled and web pipeline, once all of its builds and tests finished,
   also when some failed (`ci/dev-set.py`). For each component and OS (cxl and cxl-mock separately):
@@ -185,7 +185,7 @@ A dev set is a complete set of Cognos packages, every component for ubuntu24 and
 - A merge request's packages are the artifacts of its build jobs (14 days): `fetch-packages.py --pipeline <id>`
   deploys them, with the newest dev set for the components the merge request did not build.
 
-Deploying: see "Prepare the artifacts" in [deploy/README.md](../deploy/README.md). Every deployment starts from a clean
+Deploying: see "Prepare the artifacts" in [deploy/ansible/README.md](../deploy/ansible/README.md). Every deployment starts from a clean
 host: `deploy_cognos.yml` first runs `remove_cognos.yml`.
 
 ## Releases
@@ -209,7 +209,7 @@ run is reported in the merge request and does not count as a break. All release 
 They use `RELEASE_BOT_TOKEN`, except "publish release", which uses the job token. Releases are not published to Nexus
 yet; that comes when the component repositories stop releasing.
 
-Deploying a release: `deploy/scripts/fetch-packages.py --os ubuntu24 --release vX.Y.Z`.
+Deploying a release: `deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --release vX.Y.Z`.
 
 ## Sync
 
@@ -224,7 +224,7 @@ the repository's version wins; where one side deleted a file the other changed, 
 stays if the repository has it, and goes if the repository deleted it). This repository's changes elsewhere are kept.
 The merge request lists every file where the repository's version replaced a change made here. A component that cannot
 be merged for another reason fails the job and needs a merge request by hand; the others still sync.
-`deploy/` is owned by this repository and is not synced; `cama` is a submodule.
+`deploy/ansible/` is owned by this repository and is not synced; `cama` is a submodule.
 
 It runs only when `SYNC_COMPONENTS` is `true`, on `main`:
 
@@ -246,7 +246,7 @@ The sync uses `RELEASE_BOT_TOKEN`: its merge requests and merge commits are made
 | `DEPLOY_MANAGEMENT_SERVER`, default `msl-ssg-vm22.msl.lab` | `management_server` | controller (port 9999), REST server (port 8001) |
 | `DEPLOY_APPLICATION_SERVER`, default `msl-ssg-srf06.msl.lab` | `application_server` | node, svc-mgr, cmmh driver, the real cxl (srf06 has CXL devices) |
 
-`deploy/scripts/test-deploy.sh` does the work:
+`deploy/ansible/scripts/test-deploy.sh` does the work:
 
 1. Records each host's state: packages, systemd units, Cognos folders, users, `ld.so.conf.d`, ufw.
 2. Deploys this pipeline's ubuntu24 packages (`fetch-packages.py --pipeline`, completed from the newest dev set) with
@@ -273,14 +273,14 @@ available to this pipeline". An unprotected variable reaches every branch pipeli
 Developer role or higher can change the CI file on a branch, so unprotect it only for the test and protect it again
 right after (Settings → CI/CD → Variables → `DEPLOY_SSH_KEY` → Protect variable).
 
-To run it by hand from a checkout: put the packages in `deploy/artifacts/SVK/` with `fetch-packages.py`, then
-`deploy/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key>` (`--mock` for an
+To run it by hand from a checkout: put the packages in `deploy/ansible/artifacts/SVK/` with `fetch-packages.py`, then
+`deploy/ansible/scripts/test-deploy.sh --management <host> --application <host> --key <root ssh key>` (`--mock` for an
 application server without CXL devices).
 
 ## Tests of the CI scripts
 
 `gitlab/scripts/tests/run.sh` tests every script the pipeline runs: `build.sh`, `ci/version.sh`, `ci/image.sh`,
-`ci/dev-set.py`, `ci/compat-check.sh`, `gitlab/scripts/api.py` and `deploy/scripts/fetch-packages.py`.
+`ci/dev-set.py`, `ci/compat-check.sh`, `gitlab/scripts/api.py` and `deploy/ansible/scripts/fetch-packages.py`.
 
 - **File modes:** each of those scripts is executable in git.
 - **shellcheck** on the shell scripts.
@@ -289,7 +289,7 @@ application server without CXL devices).
 - **Smoke tests** (`smoke.sh`, with `--smoke`, CI only): read-only checks that the pipeline's environment reaches this
   GitLab with git (release tags and the next release patch), Python (the API) and downloads (the newest dev set).
 
-The "test ci" job runs `run.sh --smoke` whenever `ci/`, `gitlab/`, `build.sh` or `deploy/scripts/` change, and in tag
+The "test ci" job runs `run.sh --smoke` whenever `ci/`, `gitlab/`, `build.sh` or `deploy/ansible/scripts/` change, and in tag
 and scheduled pipelines. The release jobs and "publish dev set" wait for it, so a broken script never tags or publishes
 anything. Run the unit tests locally with `gitlab/scripts/tests/run.sh` (needs `shellcheck` and `dpkg-deb`).
 
