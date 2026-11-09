@@ -1,4 +1,4 @@
-# Cognos Ansible README.md
+# Cognos Ansible
 
 ## Overview
 
