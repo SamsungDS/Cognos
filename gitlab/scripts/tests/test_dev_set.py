@@ -8,9 +8,9 @@ from helpers import REPO, TempDirTestCase, sh
 
 DEV_SET = str(REPO / "ci/dev-set.py")
 COMPONENTS = ["core", "mgmt-fw", "node", "ras", "slat", "me", "cxl", "cxl-mock", "sapp"]
-DIRS = {"core": "components/core", "mgmt-fw": "components/mgmt-fw", "node": "components/node",
-        "ras": "components/ras", "slat": "components/slat", "me": "components/me", "cxl": "components/cxl",
-        "cxl-mock": "components/cxl", "sapp": "apps/sapp"}
+DIRS = {"core": "features/core", "mgmt-fw": "features/mgmt-fw", "node": "features/node",
+        "ras": "features/ras", "slat": "features/slat", "me": "features/me", "cxl": "features/cxl",
+        "cxl-mock": "features/cxl", "sapp": "apps/sapp"}
 NAMES = {"cxl-mock": "cognos-cxl-mock", "sapp": "cognos-app"}
 
 
@@ -30,7 +30,7 @@ class DevSetTest(TempDirTestCase):
                     (d / f).write_text(f"{f}\n")
 
     def clean(self):
-        for top in ("components", "apps"):
+        for top in ("features", "apps"):
             sh("rm", "-rf", str(self.tmp / top))
 
     def results(self, failed=(), only=COMPONENTS):

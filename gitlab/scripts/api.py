@@ -316,21 +316,21 @@ def publish_release(args):
         "tag_name": tag, "name": f"Cognos {version}",
         "description": f"Cognos {version}: packages for ubuntu24 and ol10. `cognos-{version}-<os>.zip` holds all of "
                        f"one OS's packages (ol10 with cognos-grpc) and `set.json`, which lists every file with its "
-                       f"sha256. Or deploy with `deploy/scripts/fetch-packages.py --os <os> --release {tag}`.",
+                       f"sha256. Or deploy with `deploy/ansible/scripts/fetch-packages.py --os <os> --release {tag}`.",
         "assets": {"links": links}}, job_token=True)
     print(f"Created release {tag}")
 
 
-# sync: monorepo folder -> component repository (on this GitLab). deploy/ is owned by this repository; cama is a
+# sync: monorepo folder -> component repository (on this GitLab). deploy/ansible/ is owned by this repository; cama is a
 # submodule.
 COMPONENT_REPOS = {
-    "core": ("components/core", "dfs/svk/core"),
-    "mgmt-fw": ("components/mgmt-fw", "dfs/svk/mgmt-fw"),
-    "cxl": ("components/cxl", "dfs/svk/cxl"),
-    "slat": ("components/slat", "dfs/svk/slat"),
-    "ras": ("components/ras", "dfs/svk/ras"),
-    "me": ("components/me", "dfs/svk/svk-me"),
-    "node": ("components/node", "dfs/svk/svk-node"),
+    "core": ("features/core", "dfs/svk/core"),
+    "mgmt-fw": ("features/mgmt-fw", "dfs/svk/mgmt-fw"),
+    "cxl": ("features/cxl", "dfs/svk/cxl"),
+    "slat": ("features/slat", "dfs/svk/slat"),
+    "ras": ("features/ras", "dfs/svk/ras"),
+    "me": ("features/me", "dfs/svk/svk-me"),
+    "node": ("features/node", "dfs/svk/svk-node"),
     "sapp": ("apps/sapp", "dfs/svk/sapp"),
     "amo-prof": ("profilers/amo-prof", "dfs/svk/amo_prof"),
 }

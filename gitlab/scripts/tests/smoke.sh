@@ -41,7 +41,7 @@ echo "-- the newest dev set downloads and its checksums match"
 dest=$(mktemp -d)
 trap 'rm -rf "$dest"' EXIT
 if ARTIFACTS_DIR=$dest COGNOS_GITLAB_URL=$CI_SERVER_URL COGNOS_PROJECT=$CI_PROJECT_PATH \
-    deploy/scripts/fetch-packages.py --os ubuntu24 --set latest --only core > "$dest.log" 2>&1; then
+    deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --set latest --only core > "$dest.log" 2>&1; then
     grep -q "checksums OK" "$dest.log" || fail "no checksum confirmation: $(cat "$dest.log")"
     compgen -G "$dest/cognos-core_*.deb" > /dev/null || fail "no cognos-core package downloaded"
 elif grep -q "no dev set available" "$dest.log"; then

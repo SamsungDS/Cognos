@@ -1,75 +1,153 @@
 # Cognos
 
-Cognos is a management console for CXL memory devices and tiered memory. This repository brings the Cognos software stack together in one place.
+Cognos is the Samsung management console for CXL memory devices and tiered memory. It discovers the CXL devices
+attached to a cluster's application servers, reports their state, health and errors, and lets an administrator
+configure them from one place, through a REST API or a web user interface. On each server it profiles how
+applications use memory and moves data between the faster tier (local DRAM) and the slower tier (CXL or remote
+memory) to meet each application's service-level requirements.
 
-Each component was imported from its own repository with its history unchanged. The repository-wide build and CI are being added; until then, each component builds with its own `scripts/build.sh`.
+A Cognos cluster has a management server, which runs the controller and the REST API, and one or more application
+servers, which run a node agent and the feature modules that work with the hardware. This repository holds the whole
+Cognos software stack, its build, its CI and its deployment.
+
+## Features
+
+The features are the components of the Cognos stack. Each one is built into its own package (`cognos-<name>`), and
+all of them carry the one Cognos version.
+
+### Core (`features/core`)
+
+The framework that every other component builds on. It provides inter-process communication and publish/subscribe
+messaging between the services and the feature modules, and the loader that finds and starts the feature modules at
+run time. Its headers and libraries are published for the other components through pkg-config.
+
+### Management framework (`features/mgmt-fw`)
+
+The management layer of a Cognos cluster. It contains the gRPC controller that runs on the management server, the
+node server that runs on every application server and registers with the controller, the REST API server, and the
+service manager that loads the feature modules on each node. It also holds the gRPC API definitions (proto files)
+shared by the components.
+
+### CXL (`features/cxl`)
+
+The feature module for CXL devices. It reads and updates the state of the connected CXL memory devices through their
+fabric management interface, and reports it upward to the controller and the user interface. It can run against real
+devices or, in its mock variant (`cognos-cxl-mock`), against simulated ones for development and testing.
+
+### SLA tracker (`features/slat`)
+
+The feature module that keeps applications within their service-level agreements. Depending on an application's
+requirements, such as latency, it sends each operation to the logic modules that can meet them, collects the SLA
+details of the result, and asks the supporting modules to configure the devices when the requirements are not met.
+
+### RAS (`features/ras`)
+
+The feature module for reliability, availability and serviceability of CXL memory. It collects and handles the
+memory errors and events the system reports for CXL devices, so that the controller and the user interface can show
+the health of each device and act on failures.
+
+### Memory engine (`features/me`)
+
+The feature module for tier-aware data placement. It profiles how an application uses its memory and moves data
+between the faster tier (DRAM) and the slower tier (CXL or remote memory) according to what it finds. Profilers and
+data movers are pluggable logic modules, configured per application.
+
+### Node (`features/node`)
+
+The feature module that describes each server: its CPUs, its memory and its PCI devices. The controller, the other
+feature modules and the user interface use this information to know what each application server has, and the user
+interface shows it per node.
+
+### App (`apps/sapp`)
+
+The Cognos management application, the top layer of the stack. It provides the backend of the web application, which
+talks to the Cognos services, stores state and metadata and passes Cognos events to the user interface; a subscriber
+that stores the published metrics in InfluxDB; the web user interface, served by Caddy; and an optional RBAC service
+for user accounts and roles.
+
+## Profilers
+
+### AMO-Prof (`profilers/amo-prof`)
+
+AMO-Prof is a profiling and report-generation tool for AI inference workloads. It correlates the metrics of the
+serving framework (SGLang and its HiCache KV cache) with GPU and HBM telemetry, host DRAM bandwidth, operating-system
+memory pressure, network and local storage activity, and produces HTML reports (executive summary, interactive
+timelines and a detailed end report) that show where a workload's bottleneck is across HBM, DRAM and SSD. It is a
+standalone Python package with its own version and is not part of the Cognos packages. See
+[profilers/amo-prof/README.md](profilers/amo-prof/README.md).
 
 ## Repository layout
 
 | Path | Contents |
 |---|---|
-| `components/core` | Core framework: IPC, publish/subscribe and the feature-module loader. |
-| `components/mgmt-fw` | Management framework: gRPC controller, node server, REST server and service manager. |
-| `components/cxl` | CXL device feature module. |
-| `components/slat` | SLA tracker feature module. |
-| `components/ras` | RAS error-handling feature module. |
-| `components/me` | Memory engine feature module (tier-aware data placement). |
-| `components/node` | System information feature module (CPU, memory, PCI). |
-| `apps/sapp` | Cognos management application: backend, user interface and RBAC service. |
-| `profilers/amo-prof` | AMO_Prof profiler. Not part of the Cognos packages. |
+| `features/` | The Cognos components: `core`, `mgmt-fw`, `cxl`, `slat`, `ras`, `me`, `node`. |
+| `apps/sapp` | The Cognos management application: backend, user interface and RBAC service. |
+| `profilers/amo-prof` | The AMO-Prof profiler. |
 | `cama` | CaMa, a separate repository included as a git submodule. It is built and deployed separately. |
-| `deploy/` | Ansible playbooks and roles that deploy Cognos. |
-| `gitlab/` | GitLab-specific CI configuration. See [docs/ci.md](docs/ci.md). |
-| `VERSION` | Version of the Cognos stack. |
+| `deploy/ansible/` | The Ansible playbooks and roles that deploy Cognos, and the deployment scripts. |
+| `utils/` | Utilities (empty for now). |
+| `ci/` | The CI scripts that do not depend on GitLab: version, images, dev sets, compatibility check. |
+| `gitlab/` | The GitLab CI configuration and its scripts. See [docs/ci.md](docs/ci.md). |
+| `docs/` | Documentation of the CI. |
+| `build.sh` | Builds the packages of the components, or runs their unit tests. |
+| `VERSION` | The release line of the Cognos stack (`MAJOR.MINOR`). |
 
-To include CaMa, clone with `git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
+Each component keeps its own `README.md` and its own `scripts/build.sh`. To include CaMa, clone with
+`git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
 
-## Deploy Cognos using Ansible
+## Build
 
-To deploy Cognos using Ansible, follow [deploy/README.md](deploy/README.md). It covers, in order:
+### Cognos
 
-1. Creating the Ansible user on the cluster nodes and the controller.
-2. Setting up the Ansible controller.
-3. Writing the inventory file.
-4. Storing passwords with `ansible-vault`.
-5. Preparing the Cognos packages in `deploy/artifacts/`.
-6. Running the deployment playbook.
-
-In short, once the prerequisites are in place:
-
-```bash
-cd deploy
-ansible-playbook -i your_inventory playbooks/deploy_cognos.yml --ask-vault-pass
-```
-
-### Passwords to set before deploying
-
-The repository does not contain working passwords. Two variables in `deploy/group_vars/all/all.yml` hold placeholder values and must be replaced before Cognos is deployed:
-
-| Variable | Used for | Placeholder |
-|---|---|---|
-| `influxdb_pwd` | Password of the InfluxDB user (`influxdb_user`, default `svk`) created when InfluxDB is set up on the management server. | `CHANGE_ME_INFLUXDB_PASSWORD` |
-| `rbac_password` | Password of the RBAC super administrator (`rbac_username`, default `super_admin`). Written to the RBAC service configuration as `SUPER_ADMIN_PASSWORD`. It must be at least 8 characters. | `CHANGE_ME_RBAC_PASSWORD` |
-
-Do not put real values in `all.yml` and do not commit them. Add them to the vault file that holds the Ansible user's password, `deploy/group_vars/all/passwords.yml` (section IV of [deploy/README.md](deploy/README.md)):
+`build.sh` at the repository root builds the release packages (`.deb` for Ubuntu 24.04, `.rpm` for Oracle Linux 10)
+of all the components, in dependency order, and collects them in `build/artifacts/<os>/`:
 
 ```bash
-cd deploy
-ansible-vault edit group_vars/all/passwords.yml    # use "ansible-vault create" if the file does not exist yet
+./build.sh                       # all components for Ubuntu 24.04, each in a Docker container
+./build.sh --os ol10             # the same for Oracle Linux 10
+./build.sh core mgmt-fw          # only these components
+./build.sh --mock cxl            # the cxl mock variant (cognos-cxl-mock)
+./build.sh --test                # run the components' unit tests instead of building packages
 ```
 
-```yaml
----
-vault_ansible_password: "<your_ansible_password>"
-influxdb_pwd: "<your_influxdb_password>"
-rbac_password: "<your_rbac_password>"
+Each component is built in a container from its own `scripts/docker/<os>.DOCKERFILE`. Those images install their
+build dependencies from the internal Nexus, so this needs the lab network. With `--native`, `build.sh` builds on the
+current machine instead, which must run the target OS and have the component's dependencies installed
+(`scripts/dependencies/install.sh` in the component's folder). `./build.sh -h` shows all options.
+
+The packages get the version printed by `ci/version.sh`: the `vX.Y.Z` tag on the current commit, otherwise a
+development version of the next release line (for example `1.7.0~dev.0.local`). How the pipeline builds, tests and
+publishes the packages is described in [docs/ci.md](docs/ci.md).
+
+### AMO-Prof
+
+AMO-Prof is a Python package (Python 3.12 or later). From `profilers/amo-prof`, either build a wheel:
+
+```bash
+cd profilers/amo-prof
+scripts/build_wheel.sh           # -> dist/amoprof-<version>-py3-none-any.whl
+python3 -m venv ~/amoprof_venv && source ~/amoprof_venv/bin/activate
+pip install dist/amoprof-*.whl
+amoprof --version
 ```
 
-Ansible loads the files in `group_vars/all/` in alphabetical order, so the values in `passwords.yml` override the placeholders in `all.yml`.
+or install it from the source tree together with the operating-system tools its collectors use:
 
-Other ways to supply the values:
+```bash
+cd profilers/amo-prof
+./install.sh
+source ~/amoprof_venv/bin/activate
+amoprof --version
+```
 
-- Pass an encrypted variables file with the same content: `ansible-playbook ... -e @secrets.yml --ask-vault-pass`.
-- In automation, write the three variables to `group_vars/all/passwords.yml` from protected, masked CI variables before running the playbook.
+[profilers/amo-prof/README.md](profilers/amo-prof/README.md) describes the options and the collectors' tools.
 
-The placeholders are not rejected automatically. If they are left unchanged, the InfluxDB user and the RBAC administrator are created with these placeholder passwords.
+## Deploy
+
+Cognos is deployed with Ansible. The playbooks, roles and the steps to follow, from setting up the Ansible
+controller to running the deployment and setting the passwords it needs, are in
+[deploy/ansible/README.md](deploy/ansible/README.md).
+
+## Papers and publications
+
+- [Samsung Cognos Management Console white paper](https://download.semiconductor.samsung.com/resources/white-paper/04_01_Latest_Samsung_Cognos_Mgmt_Console_Whitepaper_10139392999591.pdf)

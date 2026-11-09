@@ -15,7 +15,7 @@
 #   8. Deploy to the lab
 #   9. Other jobs: check version, amo-prof, ansible
 #
-# The pipeline that came with deploy/ (deploy/.gitlab-ci.yml) is deliberately
+# The pipeline that came with deploy/ansible/ (deploy/ansible/.gitlab-ci.yml) is deliberately
 # not included. Its deploy stage restores VM snapshots and deploys as root to
 # shared lab VMs.
 
@@ -30,7 +30,7 @@ include:
   - project: dfs/svk/tools
     ref: efbaaadf825e3525126e506fc6400c91c794f406
     file: .config/ci/gitlab/docker.yml
-  - local: deploy/.config/ci/gitlab/lint.yml
+  - local: deploy/ansible/.config/ci/gitlab/lint.yml
 
 workflow:
   rules:
@@ -79,13 +79,13 @@ variables:
 # ci/image.sh).
 
 .rebuild-all: &rebuild-all
-  - components/core/**/*
-  - components/mgmt-fw/**/*
+  - features/core/**/*
+  - features/mgmt-fw/**/*
   - gitlab/**/*
   - ci/**/*
   - VERSION
   - build.sh
-  - deploy/scripts/fetch-packages.py
+  - deploy/ansible/scripts/fetch-packages.py
 
 # ---------------------------------------------------------------------------
 # 3. Job templates
@@ -229,10 +229,10 @@ variables:
 .core:
   variables:
     COMPONENT: core
-    COMPONENT_DIR: components/core
+    COMPONENT_DIR: features/core
   rules:
     - changes: *rebuild-all
-    - changes: [components/core/**/*]
+    - changes: [features/core/**/*]
 
 build core image:
   extends: [.image, .core]
@@ -252,10 +252,10 @@ scan core:
 .mgmt-fw:
   variables:
     COMPONENT: mgmt-fw
-    COMPONENT_DIR: components/mgmt-fw
+    COMPONENT_DIR: features/mgmt-fw
   rules:
     - changes: *rebuild-all
-    - changes: [components/mgmt-fw/**/*]
+    - changes: [features/mgmt-fw/**/*]
 
 build mgmt-fw image:
   extends: [.image, .mgmt-fw]
@@ -277,10 +277,10 @@ scan mgmt-fw:
 .node:
   variables:
     COMPONENT: node
-    COMPONENT_DIR: components/node
+    COMPONENT_DIR: features/node
   rules:
     - changes: *rebuild-all
-    - changes: [components/node/**/*]
+    - changes: [features/node/**/*]
 
 build node image:
   extends: [.image, .node]
@@ -302,10 +302,10 @@ scan node:
 .ras:
   variables:
     COMPONENT: ras
-    COMPONENT_DIR: components/ras
+    COMPONENT_DIR: features/ras
   rules:
     - changes: *rebuild-all
-    - changes: [components/ras/**/*]
+    - changes: [features/ras/**/*]
 
 build ras image:
   extends: [.image, .ras]
@@ -326,10 +326,10 @@ scan ras:
 .slat:
   variables:
     COMPONENT: slat
-    COMPONENT_DIR: components/slat
+    COMPONENT_DIR: features/slat
   rules:
     - changes: *rebuild-all
-    - changes: [components/slat/**/*]
+    - changes: [features/slat/**/*]
 
 build slat image:
   extends: [.image, .slat]
@@ -351,10 +351,10 @@ scan slat:
 .me:
   variables:
     COMPONENT: me
-    COMPONENT_DIR: components/me
+    COMPONENT_DIR: features/me
   rules:
     - changes: *rebuild-all
-    - changes: [components/me/**/*]
+    - changes: [features/me/**/*]
 
 build me image:
   extends: [.image, .me]
@@ -381,10 +381,10 @@ scan me:
 .cxl:
   variables:
     COMPONENT: cxl
-    COMPONENT_DIR: components/cxl
+    COMPONENT_DIR: features/cxl
   rules:
     - changes: *rebuild-all
-    - changes: [components/cxl/**/*]
+    - changes: [features/cxl/**/*]
 
 build cxl image:
   extends: [.image, .cxl]
@@ -482,7 +482,7 @@ scan sapp:
 # pipeline that passed ("Keep artifacts from most recent successful jobs");
 # other sets expire after 10 days. Rerunning the job (e.g. after retrying a
 # failed job) republishes the set with the new results.
-# deploy/scripts/fetch-packages.py downloads a set for deployment.
+# deploy/ansible/scripts/fetch-packages.py downloads a set for deployment.
 
 # Every component's builds (their packages) and tests (artifacts not needed),
 # and the tests of the CI scripts.
@@ -524,7 +524,7 @@ publish dev set:
     - gitlab/scripts/api.py newest-dev-set --out previous
     # cognos-grpc is not built here: the pinned version from Nexus goes into the ol10 set, so that deploying needs
     # nothing but GitLab. If Nexus does not answer, the set keeps the previous set's cognos-grpc.
-    - 'ARTIFACTS_DIR=grpc deploy/scripts/fetch-packages.py --os ol10 --grpc || echo "WARNING: cognos-grpc not fetched"'
+    - 'ARTIFACTS_DIR=grpc deploy/ansible/scripts/fetch-packages.py --os ol10 --grpc || echo "WARNING: cognos-grpc not fetched"'
     - GRPC_RPM=$(ls grpc/cognos-grpc-*.rpm 2> /dev/null | head -n 1 || true)
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --results results.json
@@ -584,8 +584,8 @@ propose release:
     - BASE=$(git ls-remote --tags origin "refs/tags/v$X_Y.*" | sed -n 's|.*refs/tags/\(v[0-9.]*\)$|\1|p' | sort -V | tail -n 1)
     - if [ -z "$BASE" ]; then echo "No $X_Y release yet; run \"create release\" first."; exit 1; fi
     - git fetch --quiet --depth 1 origin tag "$BASE"
-    - ARTIFACTS_DIR=old deploy/scripts/fetch-packages.py --os ubuntu24 --release "$BASE"
-    - ARTIFACTS_DIR=new deploy/scripts/fetch-packages.py --os ubuntu24 --set latest
+    - ARTIFACTS_DIR=old deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --release "$BASE"
+    - ARTIFACTS_DIR=new deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --set latest
     - KIND=$(ci/compat-check.sh --base "$BASE" --old old --new new --report report.md)
     - if [ "$KIND" = major ]; then NEXT=$((${X_Y%.*} + 1)).0; else NEXT=${X_Y%.*}.$((${X_Y#*.} + 1)); fi
     - echo "Proposed release $NEXT ($KIND)"
@@ -629,7 +629,7 @@ publish release:
     - !reference [.version, before_script]
   script:
     # A release needs cognos-grpc for ol10 (from Nexus, pinned): without it this job fails.
-    - ARTIFACTS_DIR=grpc deploy/scripts/fetch-packages.py --os ol10 --grpc
+    - ARTIFACTS_DIR=grpc deploy/ansible/scripts/fetch-packages.py --os ol10 --grpc
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --complete
       --extra "ol10=$(ls grpc/cognos-grpc-*.rpm | head -n 1)" --out release
@@ -669,7 +669,7 @@ sync components:
 # Run by hand on a main pipeline: deploys this pipeline's ubuntu24 packages
 # (completed from the newest dev set) with the playbooks to two lab machines,
 # checks that Cognos runs, then removes it and checks that nothing is left
-# (deploy/scripts/test-deploy.sh). The machines are only targets, not runners.
+# (deploy/ansible/scripts/test-deploy.sh). The machines are only targets, not runners.
 # DEPLOY_SSH_KEY (root on both, base64) is a protected variable, so the job is
 # offered on main pipelines only. See docs/ci.md, "Deploy to the lab".
 
@@ -702,23 +702,23 @@ deploy cognos:
     - printf '%s' "$DEPLOY_SSH_KEY" | base64 -d > "$DEPLOY_KEY"
     - chmod 600 "$DEPLOY_KEY"
   script:
-    - deploy/scripts/fetch-packages.py --os ubuntu24 --pipeline "$CI_PIPELINE_ID"
+    - deploy/ansible/scripts/fetch-packages.py --os ubuntu24 --pipeline "$CI_PIPELINE_ID"
     - >-
-      deploy/scripts/test-deploy.sh --management "$DEPLOY_MANAGEMENT_SERVER"
+      deploy/ansible/scripts/test-deploy.sh --management "$DEPLOY_MANAGEMENT_SERVER"
       --application "$DEPLOY_APPLICATION_SERVER" --key "$DEPLOY_KEY"
 
 # ---------------------------------------------------------------------------
 # 9. Other jobs
 # ---------------------------------------------------------------------------
 
-# Unit tests of the CI scripts (ci/, gitlab/scripts/, build.sh, deploy/scripts/)
+# Unit tests of the CI scripts (ci/, gitlab/scripts/, build.sh, deploy/ansible/scripts/)
 # and read-only smoke tests against this GitLab. See gitlab/scripts/tests/.
 test ci:
   stage: test
   image: python:3.12
   needs: []
   rules:
-    - changes: [ci/**/*, gitlab/**/*, build.sh, deploy/scripts/**/*]
+    - changes: [ci/**/*, gitlab/**/*, build.sh, deploy/ansible/scripts/**/*]
   before_script:
     - !reference [.internal-ca, before_script]
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends shellcheck > /dev/null
@@ -769,28 +769,28 @@ ansible-lint:
   rules:
     - when: never
 
-# ansible: lint deploy/ when it changes.
+# ansible: lint deploy/ansible/ when it changes.
 .deploy:
   variables:
     # The slug, because '/' is not allowed in a Docker tag (release/X.Y), and
     # so that a merge request never overwrites main's image.
     DOCKER_BRANCH_NAME: $CI_COMMIT_REF_SLUG
   rules:
-    # Not in tag pipelines: linting deploy/ is not part of a release, and the
+    # Not in tag pipelines: linting deploy/ansible/ is not part of a release, and the
     # image build pulls from Docker Hub every time.
     - if: $CI_COMMIT_TAG
       when: never
-    - changes: [deploy/**/*]
+    - changes: [deploy/ansible/**/*]
 
 # The ansible-lint image. The Dockerfile copies scripts/dependencies, which
-# lives under deploy/, so deploy/ is the build context.
+# lives under deploy/ansible/, so deploy/ansible/ is the build context.
 build ansible image:
   extends: [build docker, .deploy]
   stage: build-images
   variables:
     DOCKERFILE_NAME: ubuntu22
-    DOCKERFILE_PATH: deploy/scripts/docker/ubuntu22.DOCKERFILE
-    DOCKER_CONTEXT: deploy
+    DOCKERFILE_PATH: deploy/ansible/scripts/docker/ubuntu22.DOCKERFILE
+    DOCKER_CONTEXT: deploy/ansible
   script:
     - |
       docker buildx build \
@@ -802,10 +802,10 @@ build ansible image:
         --file $DOCKERFILE_PATH $DOCKER_CONTEXT \
         --provenance false
 
-# ansible.cfg, .ansible-lint and the playbooks are under deploy/.
+# ansible.cfg, .ansible-lint and the playbooks are under deploy/ansible/.
 lint ansible:
   extends: [ansible-lint, .deploy]
   needs: ["build ansible image"]
   script:
-    - cd deploy
+    - cd deploy/ansible
     - ansible-lint

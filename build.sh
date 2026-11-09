@@ -34,9 +34,9 @@ else X.(Y+1).0~dev.0.local from VERSION).
 
 Upstream packages: before building or testing, the packages of core (and of mgmt-fw for
 cxl and me) are installed from the first of:
-  1. components/<upstream>/build/artifacts/<os>/, this pipeline's or your own
+  1. features/<upstream>/build/artifacts/<os>/, this pipeline's or your own
      build (logged as "pipeline");
-  2. the newest dev set, downloaded with deploy/scripts/fetch-packages.py
+  2. the newest dev set, downloaded with deploy/ansible/scripts/fetch-packages.py
      (logged as "dev set"; UPSTREAM_DEV_SET=0 skips it);
   3. the packages already installed, e.g. the image's (logged as "image").
 EOF
@@ -48,7 +48,7 @@ die() {
 }
 
 component_dir() {
-    if [[ $1 == sapp ]]; then echo "$ROOT/apps/sapp"; else echo "$ROOT/components/$1"; fi
+    if [[ $1 == sapp ]]; then echo "$ROOT/apps/sapp"; else echo "$ROOT/features/$1"; fi
 }
 
 # Upstream components whose packages a component builds against.
@@ -111,7 +111,7 @@ install_upstream() {
     else
         pkgs=()
         mkdir -p "$ROOT/build"
-        if [[ ${UPSTREAM_DEV_SET:-1} != 0 ]] && ARTIFACTS_DIR=$dev_set_dir "$ROOT/deploy/scripts/fetch-packages.py" \
+        if [[ ${UPSTREAM_DEV_SET:-1} != 0 ]] && ARTIFACTS_DIR=$dev_set_dir "$ROOT/deploy/ansible/scripts/fetch-packages.py" \
             --os "$OS" --set latest --only "$up" --with-dev > "$log" 2>&1; then
             pkgs=("$dev_set_dir"/*."$PKG_EXT")
         fi

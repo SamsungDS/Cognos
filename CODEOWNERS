@@ -5,7 +5,7 @@
 # approval from a project Maintainer. This takes effect once "Require approval
 # from code owners" is enabled on the protected branch main.
 
-/components/ @@maintainer
+/features/ @@maintainer
 /apps/sapp/ @@maintainer
 /profilers/amo-prof/ @@maintainer
 /VERSION @@maintainer

@@ -8,7 +8,7 @@
 #   --report   where to write the findings (Markdown)
 #
 # Prints "major" if a public interface broke, else "minor":
-#   - mgmt-fw's gRPC API (components/mgmt-fw/proto/framework): buf breaking against --base;
+#   - mgmt-fw's gRPC API (features/mgmt-fw/proto/framework): buf breaking against --base;
 #   - every shared library in the packages: abidiff, old against new (an incompatible ABI change).
 # A check that cannot run is reported and counts as no break: the reviewer of the release merge request decides.
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-PROTO_DIR=components/mgmt-fw/proto
+PROTO_DIR=features/mgmt-fw/proto
 # The framework protos import google/api and protoc-gen-openapiv2 from third_party/.
 BUF_CONFIG='{"version":"v2","modules":[{"path":"framework"},{"path":"third_party"}],"breaking":{"use":["FILE"]}}'
 

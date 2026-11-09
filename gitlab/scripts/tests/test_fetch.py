@@ -1,4 +1,4 @@
-"""deploy/scripts/fetch-packages.py against a fake GitLab and Nexus."""
+"""deploy/ansible/scripts/fetch-packages.py against a fake GitLab and Nexus."""
 
 import hashlib
 import io
@@ -30,8 +30,8 @@ class FetchTest(TempDirTestCase):
         self.p = self.gitlab.project
         # The script, as in a checkout, so that --local reads this root's build/artifacts.
         self.root = self.tmp / "root"
-        (self.root / "deploy/scripts").mkdir(parents=True)
-        shutil.copy2(REPO / "deploy/scripts/fetch-packages.py", self.root / "deploy/scripts/")
+        (self.root / "deploy/ansible/scripts").mkdir(parents=True)
+        shutil.copy2(REPO / "deploy/ansible/scripts/fetch-packages.py", self.root / "deploy/ansible/scripts/")
         self.dest = self.tmp / "dest"
 
     def publish_set(self, job, pipeline, files=None, corrupt=None):
@@ -58,7 +58,7 @@ class FetchTest(TempDirTestCase):
     def fetch(self, *args, check=True):
         env = self.env(COGNOS_GITLAB_URL=self.gitlab.url, COGNOS_PROJECT="dfs/svk/cognos", NEXUS_URL=self.gitlab.url,
                        ARTIFACTS_DIR=self.dest)
-        return sh("python3", str(self.root / "deploy/scripts/fetch-packages.py"), *args, env=env, check=check)
+        return sh("python3", str(self.root / "deploy/ansible/scripts/fetch-packages.py"), *args, env=env, check=check)
 
     def files(self):
         return sorted(p.name for p in self.dest.iterdir())
@@ -116,7 +116,7 @@ class FetchTest(TempDirTestCase):
         self.publish_set(20, 2)
         archive = io.BytesIO()
         with zipfile.ZipFile(archive, "w") as z:
-            z.writestr("components/core/build/artifacts/ubuntu24/cognos-core_1.7.0~dev.0.mr3.9-ubuntu24.04_amd64.deb", b"mr")
+            z.writestr("features/core/build/artifacts/ubuntu24/cognos-core_1.7.0~dev.0.mr3.9-ubuntu24.04_amd64.deb", b"mr")
         self.gitlab.route("GET", rf"{self.p}/pipelines/9/jobs\?per_page=100&scope\[\]=success",
                           [{"id": 91, "name": "build core: [ubuntu24]"}, {"id": 92, "name": "build core image: [ubuntu24]"},
                            {"id": 93, "name": "build core: [ol10]"}])
