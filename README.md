@@ -15,50 +15,50 @@ Cognos software stack, its build, its CI and its deployment.
 The features are the components of the Cognos stack. Each one is built into its own package (`cognos-<name>`), and
 all of them carry the one Cognos version.
 
-### Core
+#### Cognos Core
 
 The framework that every other component builds on. It provides inter-process communication and publish/subscribe
 messaging between the services and the feature modules, and the loader that finds and starts the feature modules at
 run time. Its headers and libraries are published for the other components through pkg-config.
 
-### Management framework
+#### Cognos Management Framework
 
 The management layer of a Cognos cluster. It contains the gRPC controller that runs on the management server, the
 node server that runs on every application server and registers with the controller, the REST API server, and the
 service manager that loads the feature modules on each node. It also holds the gRPC API definitions (proto files)
 shared by the components.
 
-### CXL
+#### Cognos CXL
 
 The feature module for CXL devices. It reads and updates the state of the connected CXL memory devices through their
 fabric management interface, and reports it upward to the controller and the user interface. It can run against real
 devices or, in its mock variant (`cognos-cxl-mock`), against simulated ones for development and testing.
 
-### SLA tracker
+#### Cognos SLA Tracker
 
 The feature module that keeps applications within their service-level agreements. Depending on an application's
 requirements, such as latency, it sends each operation to the logic modules that can meet them, collects the SLA
 details of the result, and asks the supporting modules to configure the devices when the requirements are not met.
 
-### RAS
+#### Cognos RAS
 
 The feature module for reliability, availability and serviceability of CXL memory. It collects and handles the
 memory errors and events the system reports for CXL devices, so that the controller and the user interface can show
 the health of each device and act on failures.
 
-### Memory engine
+#### Cognos Memory Engine
 
 The feature module for tier-aware data placement. It profiles how an application uses its memory and moves data
 between the faster tier (DRAM) and the slower tier (CXL or remote memory) according to what it finds. Profilers and
 data movers are pluggable logic modules, configured per application.
 
-### Node
+#### Cognos Node
 
 The feature module that describes each server: its CPUs, its memory and its PCI devices. The controller, the other
 feature modules and the user interface use this information to know what each application server has, and the user
 interface shows it per node.
 
-### App
+#### Cognos App
 
 The Cognos management application, the top layer of the stack. It provides the backend of the web application, which
 talks to the Cognos services, stores state and metadata and passes Cognos events to the user interface; a subscriber
@@ -67,7 +67,7 @@ for user accounts and roles.
 
 ## Profilers
 
-### AMO-Prof
+#### AMO-Prof
 
 AMO-Prof is a profiling and report-generation tool for AI inference workloads. It correlates the metrics of the
 serving framework (SGLang and its HiCache KV cache) with GPU and HBM telemetry, host DRAM bandwidth, operating-system
@@ -97,7 +97,7 @@ Each component keeps its own `README.md` and its own `scripts/build.sh`. To incl
 
 ## Build
 
-### Cognos
+#### Cognos
 
 `build.sh` at the repository root builds the release packages (`.deb` for Ubuntu 24.04, `.rpm` for Oracle Linux 10)
 of all the components, in dependency order, and collects them in `build/artifacts/<os>/`:
@@ -119,7 +119,7 @@ The packages get the version printed by `ci/version.sh`: the `vX.Y.Z` tag on the
 development version of the next release line (for example `1.7.0~dev.0.local`). How the pipeline builds, tests and
 publishes the packages is described in [docs/ci.md](docs/ci.md).
 
-### AMO-Prof
+#### AMO-Prof
 
 AMO-Prof is a Python package (Python 3.12 or later). From `profilers/amo-prof`, either build a wheel:
 
