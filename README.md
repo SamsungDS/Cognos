@@ -91,6 +91,7 @@ standalone Python package with its own version and is not part of the Cognos pac
 | `docs/` | Documentation of the CI. |
 | `build.sh` | Builds the packages of the components, or runs their unit tests. |
 | `VERSION` | The release line of the Cognos stack (`MAJOR.MINOR`). |
+| `LICENSE` | The Apache License, Version 2.0. |
 
 Each component keeps its own `README.md` and its own `scripts/build.sh`.
 
@@ -150,3 +151,7 @@ controller to running the deployment and setting the passwords it needs, are in
 ## Papers and publications
 
 - [Samsung Cognos Management Console white paper](https://download.semiconductor.samsung.com/resources/white-paper/04_01_Latest_Samsung_Cognos_Mgmt_Console_Whitepaper_10139392999591.pdf)
+
+## License
+
+Cognos is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
