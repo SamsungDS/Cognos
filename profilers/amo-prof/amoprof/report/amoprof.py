@@ -123,6 +123,34 @@ except Exception:  # pragma: no cover - amoprof.py also runs as a script
             return body or ""
         _FX_CSS = _FX_CSS_LIGHT = ""  # type: ignore
 
+try:
+    from amoprof.config_checks import declared_benchmark as _declared_benchmark
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_cc
+        from pathlib import Path as _P_cc
+        _sys_cc.path.insert(0, str(_P_cc(__file__).resolve().parents[2]))
+        from amoprof.config_checks import declared_benchmark as _declared_benchmark
+    except Exception:
+        def _declared_benchmark(setup, cli_value=""):  # type: ignore
+            for _k in ("Application / Benchmark", "Benchmark", "Application"):
+                _v = str((setup or {}).get(_k, "") or "").strip()
+                if _v and _v.lower() not in ("unknown", "none", "n/a", "default"):
+                    return _v
+            return ""
+
+try:
+    from amoprof.redact import scrub_html as _scrub_html
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_rd
+        from pathlib import Path as _P_rd
+        _sys_rd.path.insert(0, str(_P_rd(__file__).resolve().parents[2]))
+        from amoprof.redact import scrub_html as _scrub_html
+    except Exception:
+        def _scrub_html(html, raw_dir=None, extra=None):  # type: ignore
+            return html
+
 def _amoprof_numeric_series(values, default: float = float("nan")) -> pd.Series:
     """Coerce AMOprof report time-series values to float robustly.
 
@@ -3821,6 +3849,7 @@ def collect_from_prometheus_api(
         "cache_hit_time_weighted_pct": round(_time_weighted_hit, 2),
         "cache_hit_request_weighted_pct": round(_request_weighted_hit, 2),
         "cache_hit_cached_prompt_pct":  round(_cached_prompt_hit, 2),
+        "cache_hit_cached_prompt_available": bool(_ch.get("cache_hit_cached_prompt_available", _d_prompt > 0)),
         "cache_hit_effective_prompt_pct": round(_effective_prompt_hit, 2),
         "cache_hit_token_weighted_numerator_tokens": round(_d_cached, 3),
         "cache_hit_token_weighted_denominator_tokens": round(_d_prompt, 3),
@@ -5435,6 +5464,7 @@ def collect_from_prometheus(
         "cache_hit_time_weighted_pct": round(cache_hit_time_weighted, 2),
         "cache_hit_request_weighted_pct": round(cache_hit_request_weighted, 2),
         "cache_hit_cached_prompt_pct":  round(cache_hit_cached_prompt_pct, 2),
+        "cache_hit_cached_prompt_available": bool(_ch.get("cache_hit_cached_prompt_available", d_prompt > 0)),
         "cache_hit_effective_prompt_pct": round(cache_hit_effective_prompt_pct, 2),
         "cache_hit_token_weighted_numerator_tokens": round(d_cached, 3),
         "cache_hit_token_weighted_denominator_tokens": round(d_prompt, 3),
@@ -6407,6 +6437,8 @@ document.addEventListener("DOMContentLoaded", () => {{
             html = apply_common_kpis_to_html(html, Path(_rd), _common_kpis_for_html)
     except Exception:
         pass
+
+    html = _scrub_html(html, getattr(m, "_amoprof_raw_dir", "") or None)
 
     if output_path:
         Path(output_path).write_text(html, encoding="utf-8")
@@ -7710,7 +7742,8 @@ class Metrics:
     cache_hit_request_json_pct: float = 0
     cache_hit_openai_usage_pct: float = 0
     cache_hit_benchmark_pct: float = 0
-    cache_hit_token_weighted_pct: float = 0
+    cache_hit_token_weighted_pct: float = 0   # cached_tokens_total / prompt_tokens_total (diagnostic)
+    cache_hit_cached_prompt_available: bool = False  # prompt_tokens_total exported in the window
     cache_hit_prefill_token_weighted_pct: float = 0
     cache_hit_time_weighted_pct: float = 0
     cache_hit_request_weighted_pct: float = 0
@@ -8539,7 +8572,7 @@ def extract_metrics(data: dict) -> Metrics:
     m.setup_attention_backend = _first_sg("attention_backend", "attn_backend")
     m.setup_schedule_policy = _first_sg("schedule_policy", "scheduler_policy")
     m.setup_details = {
-        "Model": m.setup_model, "Runtime": m.setup_runtime, "Application / Benchmark": m.setup_details.get("Application / Benchmark", m.setup_details.get("Application", m.setup_details.get("Benchmark", m.setup_instance))),
+        "Model": m.setup_model, "Runtime": m.setup_runtime, "Application / Benchmark": (_declared_benchmark(m.setup_details) or "not declared"),
         "Job": m.setup_job, "Engine": m.setup_engine_type, "TP size": m.setup_tp_size,
         "dtype": m.setup_dtype, "KV dtype": m.setup_kv_cache_dtype,
         "Context length": m.setup_context_length, "Page size": m.setup_page_size,
@@ -8743,6 +8776,9 @@ def extract_metrics(data: dict) -> Metrics:
     m.cache_hit_time_weighted_pct = float(sg.get("cache_hit_time_weighted_pct", sg.get("cache_hit_gauge_overall_pct", 0)))
     m.cache_hit_request_weighted_pct = float(sg.get("cache_hit_request_weighted_pct", 0))
     m.cache_hit_cached_prompt_pct = float(sg.get("cache_hit_cached_prompt_pct", 0))
+    m.cache_hit_cached_prompt_available = bool(sg.get(
+        "cache_hit_cached_prompt_available",
+        float(sg.get("cache_hit_token_weighted_denominator_tokens", 0) or 0) > 0))
     m.cache_hit_effective_prompt_pct = float(sg.get("cache_hit_effective_prompt_pct", 0))
     m.cache_hit_gauge_overall_pct = float(sg.get("cache_hit_gauge_overall_pct", 0))
     m.cache_hit_gauge_active_pct = float(sg.get("cache_hit_gauge_active_pct", 0))
@@ -8818,7 +8854,7 @@ def extract_metrics(data: dict) -> Metrics:
                         if vv:
                             setattr(m, attr, str(vv)); break
             m.setup_details.update({
-                "Model": m.setup_model, "Application / Benchmark": m.setup_details.get("Application / Benchmark", m.setup_details.get("Application", m.setup_details.get("Benchmark", m.setup_instance))), "Job": m.setup_job,
+                "Model": m.setup_model, "Application / Benchmark": (_declared_benchmark(m.setup_details) or "not declared"), "Job": m.setup_job,
                 "Engine": m.setup_engine_type, "Page size": m.setup_page_size,
                 "Num pages/tokens": m.setup_num_pages,
             })
@@ -12739,11 +12775,15 @@ def score_bottlenecks(m: Metrics) -> list[dict]:
     layers.append({
         "layer": "KV Cache", "score": _clamp_score(kv_score),
         "phase": "Both", "color": DECODE,
-        "detail": (f"Cache hit {m.cache_hit_pct:.1f}% (active request/session view). "
-                   f"Input/prefill-token weighted hit {getattr(m, 'cache_hit_token_weighted_pct', 0.0):.1f}% "
-                   f"when available. HiCache fill {m.hicache_fill_pct:.1f}%. "
-                   f"A large active-vs-token-weighted gap means small requests are hitting cache while "
-                   f"long prompt tails still recompute; that increases TTFT and L3 (local storage) movement. "
+        # The headline is token-weighted (prefill_cache over prefill tokens);
+        # cached/prompt counts a different token stream, so the two are not
+        # a request-vs-token pair and their difference says nothing about
+        # request sizes.
+        "detail": (f"Cache hit {m.cache_hit_pct:.1f}% of prefill tokens served from cache. "
+                   + (f"Cached/prompt diagnostic {m.cache_hit_token_weighted_pct:.1f}% "
+                      f"(cached_tokens_total ÷ prompt_tokens_total, a different counter). "
+                      if getattr(m, "cache_hit_cached_prompt_available", False) else "")
+                   + f"HiCache fill {m.hicache_fill_pct:.1f}%. "
                    f"{'Excellent cache efficiency.' if m.cache_hit_pct>90 else 'Cache miss rate warrants attention.'}"),
         "severity": "LOW" if kv_score<20 else "MED" if kv_score<50 else "HIGH",
     })
@@ -19343,7 +19383,7 @@ document.addEventListener('DOMContentLoaded', function(){{
     <tbody>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Primary cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Benchmark-comparable prompt/prefill work-avoidance KPI: cache-served tokens / (cache-served + compute-served tokens). Method: <code>{m.cache_hit_calc_method}</code>.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Effective prompt counter diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_effective_prompt_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">(Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}}) / (Δsglang_cached_tokens_total + Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}).</td></tr>
-      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Cached/prompt diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{m.cache_hit_token_weighted_pct:.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100. Diagnostic only; <code>prompt_tokens_total</code> may represent total prompt tokens rather than uncached prefill work.</td></tr>
+      <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Cached/prompt diagnostic</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{(f'{m.cache_hit_token_weighted_pct:.2f}%' if m.cache_hit_cached_prompt_available else 'not exported')}</td><td style="padding:8px 12px;color:#64748b">Δsglang_cached_tokens_total / Δsglang_prompt_tokens_total × 100. Diagnostic only; <code>prompt_tokens_total</code> may represent total prompt tokens rather than uncached prefill work{'' if m.cache_hit_cached_prompt_available else '. Not available: sglang_prompt_tokens_total is not exported in this window'}.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Time weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_time_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">avg_over_time(sglang_cache_hit_rate[window]) × 100 over the selected report window. Diagnostic only because the gauge can be overwritten frequently.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Request weighted</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_request_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">sum(rate(sglang_request_cache_hit_total[window])) / sum(rate(sglang_request_total[window])) × 100 where those counters are exported.</td></tr>
       <tr><td style="padding:8px 12px;font-weight:700;color:#0f172a">Prefill-token cache hit</td><td style="padding:8px 12px;font-family:monospace;font-weight:700;color:#22c55e">{getattr(m, 'cache_hit_prefill_token_weighted_pct', 0.0):.2f}%</td><td style="padding:8px 12px;color:#64748b">Δsglang_realtime_tokens_total{{mode="prefill_cache"}} / (Δsglang_realtime_tokens_total{{mode="prefill_cache"}} + Δsglang_realtime_tokens_total{{mode="prefill_compute"}}). Prometheus equivalent when request/response JSON is unavailable.</td></tr>
@@ -25096,6 +25136,7 @@ def main():
             except Exception:
                 pass
             html = _amoprof_storage_label_cleanup(html, getattr(m, "l3_backend_class", ""))
+            html = _scrub_html(html, getattr(m, "_amoprof_raw_dir", "") or None)
             html_path.write_text(html, encoding="utf-8")
             generated.append(html_path)
             print(f"      ✓ {html_path.name}  ({html_path.stat().st_size / _K_KB:.0f} KB)")

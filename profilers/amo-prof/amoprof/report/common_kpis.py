@@ -459,13 +459,24 @@ try:
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
         window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
         rate_series_with_time as _k_rate_with_time,
-        counter_window_total as _k_counter_total)
+        counter_window_total as _k_counter_total,
+        window_counter_delta as _k_window_counter_delta)
 except Exception:  # pragma: no cover - standalone/bundled execution
     from metric_kernels import (  # type: ignore
         counter_delta as _k_counter_delta, window_rate as _k_window_rate,
         window_seconds as _k_window_seconds, ratio_delta as _k_ratio_delta,
         rate_series_with_time as _k_rate_with_time,
-        counter_window_total as _k_counter_total)
+        counter_window_total as _k_counter_total,
+        window_counter_delta as _k_window_counter_delta)
+
+try:
+    from amoprof.report.metric_formulas import formula_details as _fx_details
+except Exception:  # pragma: no cover - standalone/bundled execution
+    try:
+        from metric_formulas import formula_details as _fx_details  # type: ignore
+    except Exception:
+        def _fx_details(body, label="formula", open_=False):  # type: ignore
+            return body or ""
 
 
 def _delta(rows: list[dict[str, Any]], *partials: str) -> float:
@@ -913,8 +924,13 @@ def compute_cache_hit_kpis(raw_dir: Path | None = None,
     # Diagnostics.  Do not use cached/prompt as primary because prompt_tokens_total
     # may mean total prompt tokens, while cached_tokens_total and realtime prefill
     # counters can represent different token streams across SGLang versions.
-    d_cached = _delta(rr, "sglang_cached_tokens_total") or _delta(rr, "cached_tokens_total")
-    d_prompt = _delta(rr, "sglang_prompt_tokens_total") or _delta(rr, "prompt_tokens_total")
+    # Every label set, ranks counted once: SGLang splits these by is_streaming,
+    # and the first column alone (is_streaming=false, never moving) read 0
+    # for a counter carrying 137M prompt tokens.  None = not exported.
+    _cached_w = _k_window_counter_delta(rr, ["cached_tokens_total"])
+    _prompt_w = _k_window_counter_delta(rr, ["prompt_tokens_total"])
+    d_cached = _cached_w or 0.0
+    d_prompt = _prompt_w or 0.0
     cached_prompt_pct = (d_cached / d_prompt * 100.0) if d_prompt > 0 else 0.0
 
     effective_prompt_pct = 0.0
@@ -996,6 +1012,9 @@ def compute_cache_hit_kpis(raw_dir: Path | None = None,
         "cache_hit_prefill_compute_tokens": round(d_rt_compute, 3),
         "cache_hit_token_weighted_pct": round(max(0.0, min(100.0, cached_prompt_pct)), 6),
         "cache_hit_cached_prompt_pct": round(max(0.0, min(100.0, cached_prompt_pct)), 6),
+        # Unless both counters are exported the 0 above is "not measured",
+        # not a 0% hit rate.
+        "cache_hit_cached_prompt_available": bool(d_prompt > 0 and _cached_w is not None),
         "cache_hit_effective_prompt_pct": round(max(0.0, min(100.0, effective_prompt_pct)), 6),
         "cache_hit_request_weighted_pct": round(max(0.0, min(100.0, request_pct)), 6),
         "cache_hit_time_weighted_pct": round(max(0.0, min(100.0, gauge_timeline_pct)), 6),
@@ -1284,7 +1303,8 @@ def compute_common_kpis(raw_dir: Path) -> dict[str, Any]:
 
     if out["throughput_mean"] <= 0:
         dur = _duration_s(raw_dir, rows, summary)
-        gen_delta = _delta(rows, "sglang_generation_tokens_total") or _delta(rows, "generation_tokens_total")
+        # All is_streaming label sets; the first column alone can be the flat one.
+        gen_delta = _k_window_counter_delta(rows, ["generation_tokens_total"]) or 0.0
         if gen_delta > 0 and dur > 0:
             out["throughput_mean"] = gen_delta / dur
             out["throughput_p50"] = out["throughput_p50"] or out["throughput_mean"]
@@ -1426,7 +1446,11 @@ def _replace_kpi_value_by_label(report_html: str, label_variants: list[str], key
         )
 
         def repl2(m):
-            note_div = f'<div style="font-size:10px;color:#64748b;margin-top:2px">{_html.escape(note)}</div>'
+            # Collapsed, as kv_card renders it: a plain div here left the
+            # rewritten tiles (TTFT, TPOT, throughput) with their formula
+            # printed in full beside sibling tiles showing only the pill.
+            note_div = ('<div style="font-size:10px;color:#64748b;margin-top:2px">'
+                        f'{_fx_details(_html.escape(note))}</div>')
             return f"{m.group(1)}{repl_label}{m.group(2)}{val_txt}{unit_span}{m.group(4)}{note_div}{m.group(6)}"
 
         out = pat2.sub(repl2, out)

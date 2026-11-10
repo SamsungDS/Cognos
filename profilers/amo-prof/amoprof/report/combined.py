@@ -32,6 +32,34 @@ except Exception:  # direct-script fallback
     from l3_backend import resolve_l3_backend, reconcile_l3_io  # type: ignore
 
 try:
+    from amoprof.config_checks import declared_benchmark as _declared_benchmark
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_cc
+        from pathlib import Path as _P_cc
+        _sys_cc.path.insert(0, str(_P_cc(__file__).resolve().parents[2]))
+        from amoprof.config_checks import declared_benchmark as _declared_benchmark
+    except Exception:
+        def _declared_benchmark(setup, cli_value=""):  # type: ignore
+            for _k in ("Application / Benchmark", "Benchmark", "Application"):
+                _v = str((setup or {}).get(_k, "") or "").strip()
+                if _v and _v.lower() not in ("unknown", "none", "n/a", "default"):
+                    return _v
+            return ""
+
+try:
+    from amoprof.redact import scrub_html as _scrub_html
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_rd
+        from pathlib import Path as _P_rd
+        _sys_rd.path.insert(0, str(_P_rd(__file__).resolve().parents[2]))
+        from amoprof.redact import scrub_html as _scrub_html
+    except Exception:
+        def _scrub_html(html, raw_dir=None, extra=None):  # type: ignore
+            return html
+
+try:
     from amoprof.report.common_kpis import (
         compute_common_kpis,
         apply_common_kpis_to_html,
@@ -4526,16 +4554,13 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             return sum(_col) / len(_col)
         return 0.0
 
-    benchmark = _pick(setup, ["Application / Benchmark","application_benchmark","Benchmark","benchmark","Application","application",
-                               "Workload","workload","Test","test","app","app_name",
-                               "Benchmark name","benchmark_name"],
-                      _pick(setup, ["Instance","instance","Server","server","endpoint"],
-                            _pick(sglang, ["instance"], "unknown")))
-    # Nothing names the workload explicitly on most runs, so infer it from
-    # evidence the run already carries rather than printing "unknown".  Order
-    # is most-specific first; each source is named in the setup table so the
-    # reader can tell an inference from a declaration.
-    if str(benchmark).strip().lower() in ("", "unknown", "none"):
+    # Only a declaration names the workload (--benchmark or the setup file).
+    # An inference -- or the Prometheus instance, the old fallback -- printed
+    # as the value read as fact: an AgentX + MLPerf run was headed
+    # "interactive serving".  An undeclared run says so, with the inference
+    # as a hint.
+    benchmark = _declared_benchmark(setup)
+    if not benchmark:
         _bench_src = ""
         # A benchmark harness leaves its own summary behind.
         for _f, _name in (("benchmark_summary.json", "bench_serving"),
@@ -4566,6 +4591,9 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 _bench_src = f"inferred from p50 input {_in_p50:,.0f} tokens"
         if _bench_src:
             setup.setdefault("Application / Benchmark source", _bench_src)
+            benchmark = f"not declared (looks like {benchmark})"
+        else:
+            benchmark = "not declared"
     runtime   = _pick(setup, ["Runtime","runtime","engine","server_type"],
                       _pick(sglang, ["server_type","runtime"], "SGLang"))
     gpu_desc  = _pick(setup, ["GPU","gpu","Accelerator","hardware","accelerator","GPU model"], "unknown")
@@ -5037,8 +5065,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     # Cache hit: use the same canonical cache-hit function as Interactive and End Report.
     # Primary semantics: cache-served prefill/prompt tokens over cache+compute
     # prefill/prompt tokens. Cached/prompt and gauge values remain diagnostics.
-    _tok_num = _safe_float(_pick(sglang, ["cache_hit_token_weighted_numerator_tokens"], 0.0), 0.0) or _ts_delta(sglang_ts, "cached_tokens_total")
-    _tok_den = _safe_float(_pick(sglang, ["cache_hit_token_weighted_denominator_tokens"], 0.0), 0.0) or _ts_delta(sglang_ts, "prompt_tokens_total")
+    # Raw-counter fallbacks read every label set (SGLang splits these by
+    # is_streaming); _ts_delta took the first column, which read 0.
+    _tok_num = _safe_float(_pick(sglang, ["cache_hit_token_weighted_numerator_tokens"], 0.0), 0.0) or (_kv_token_delta(raw_dir, ["cached_tokens_total"]) or 0.0)
+    _tok_den = _safe_float(_pick(sglang, ["cache_hit_token_weighted_denominator_tokens"], 0.0), 0.0) or (_kv_token_delta(raw_dir, ["prompt_tokens_total"]) or 0.0)
     cache_hit_token_weighted = _safe_float(_pick(sglang, ["cache_hit_token_weighted_pct", "cache_hit_cached_prompt_pct"], 0.0), 0.0) or _pct_from_ratio(_tok_num, _tok_den)
 
     _req_num = _safe_float(_pick(sglang, ["cache_hit_request_weighted_numerator_requests"], 0.0), 0.0) or (_ts_delta(sglang_ts, "request_cache_hit_total") or _ts_delta(sglang_ts, "cache_hit_request_total") or _ts_delta(sglang_ts, "request_cache_hits_total") or _ts_delta(sglang_ts, "cache_hit_requests_total"))
@@ -5077,6 +5107,15 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         cache_hit_token_weighted = _safe_float(_common_cache.get("cache_hit_token_weighted_pct", cache_hit_token_weighted), cache_hit_token_weighted)
         cache_hit_prefill_token_weighted = _safe_float(_common_cache.get("cache_hit_prefill_token_weighted_pct", cache_hit_prefill_token_weighted), cache_hit_prefill_token_weighted)
         cache_hit_time_weighted = _safe_float(_common_cache.get("cache_hit_time_weighted_pct", cache_hit_time_weighted), cache_hit_time_weighted)
+        cache_hit_request_weighted = _safe_float(_common_cache.get("cache_hit_request_weighted_pct", cache_hit_request_weighted), cache_hit_request_weighted)
+        cache_hit_gauge_active = _safe_float(_common_cache.get("cache_hit_gauge_active_pct", cache_hit_gauge_active), cache_hit_gauge_active)
+        cache_hit_effective_prompt = _safe_float(_common_cache.get("cache_hit_effective_prompt_pct", _safe_float(_pick(sglang, ["cache_hit_effective_prompt_pct"], 0.0), 0.0)), 0.0)
+    else:
+        cache_hit_effective_prompt = _safe_float(_pick(sglang, ["cache_hit_effective_prompt_pct"], 0.0), 0.0)
+    # cached_tokens_total / prompt_tokens_total exists only when SGLang exports
+    # prompt_tokens_total; otherwise its 0 means "not measured".
+    cache_hit_tw_available = bool(_common_cache.get("cache_hit_cached_prompt_available", _tok_den > 0)
+                                  if _common_cache else _tok_den > 0)
 
     # Token-weighted prefill hit rate takes precedence over every gauge-derived
     # figure.  The previous headline was the mean of sglang_cache_hit_rate over
@@ -5112,11 +5151,6 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 setup["_cache_hit_detail"] = _pf_hit["note"]
     except Exception:
         pass
-        cache_hit_request_weighted = _safe_float(_common_cache.get("cache_hit_request_weighted_pct", cache_hit_request_weighted), cache_hit_request_weighted)
-        cache_hit_gauge_active = _safe_float(_common_cache.get("cache_hit_gauge_active_pct", cache_hit_gauge_active), cache_hit_gauge_active)
-        cache_hit_effective_prompt = _safe_float(_common_cache.get("cache_hit_effective_prompt_pct", _safe_float(_pick(sglang, ["cache_hit_effective_prompt_pct"], 0.0), 0.0)), 0.0)
-    else:
-        cache_hit_effective_prompt = _safe_float(_pick(sglang, ["cache_hit_effective_prompt_pct"], 0.0), 0.0)
 
     cache_hit_tw = cache_hit_token_weighted
     throughput = _safe_float(_pick(sglang, ["gen_tp_peak","ai_op_decode_tok_s",
@@ -6564,7 +6598,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     # Spill threshold = free HBM / KV bytes per token
     spill_thresh_k = hbm_free_gb * 1e9 / (max(kv_bytes_tok_kb, 1) * 1024) / 1000
-    cache_hit_gap   = cache_hit - cache_hit_tw
+    cache_hit_gap   = (cache_hit - cache_hit_tw) if cache_hit_tw_available else 0.0
 
     # Estimate decode tokens from throughput × duration
     decode_tokens_est = int(max(tp_active, throughput * 0.1) * duration_s)
@@ -6749,8 +6783,12 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
 
     if _kvg_cached <= 0:
         _kvg_cached = _kvg_counter_delta("prefill_cache")
-    _kvg_decode = _ts_delta(sglang_ts, "generation_tokens_total",
-                            "sglang_generation_tokens_total")
+    # Output tokens, every label set: SGLang splits generation_tokens_total by
+    # is_streaming, and reading the first column (is_streaming=false, flat)
+    # gave 0 here, so the tile fell back to realtime decode -- 49,566 against
+    # the End Report's 156,119.  None = not exported.
+    _kvg_decode_w = _kv_token_delta(raw_dir, ["generation_tokens_total"])
+    _kvg_decode = _kvg_decode_w or 0.0
 
     # Some deployments export realtime_tokens_total{mode=...} and NOT the
     # prompt_tokens_total / generation_tokens_total counters.  On one such run
@@ -6784,14 +6822,18 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                 f"({_pc:,.0f}) — neither prompt_tokens_total nor a cached "
                 f"total is exported here")
     _kvg_decode_src = ""
-    if _kvg_decode <= 0:
+    if _kvg_decode_w is None:
         _v_d = _kvg_counter_delta("decode")
         if _v_d > 0:
+            # Not output tokens: where both exist this counter read 49,681
+            # against 156,481 generated (= 8,774 first tokens + 147,637
+            # inter-token intervals), so it is a lower bound.
             _kvg_decode = _v_d
             _kvg_decode_src = (
                 f"decode from Δrealtime_tokens_total{{mode=decode}} "
                 f"({_v_d:,.0f}) — sglang_generation_tokens_total is not "
-                f"exported here")
+                f"exported here; this counter reads below the output token "
+                f"count, so decode is a lower bound")
     _kvg_recomp = max(0.0, _kvg_prompt - _kvg_cached)
     _kvg_new_tok = _kvg_recomp + _kvg_decode
     # What the run would have had to compute with no cache at all. The ratio
@@ -7231,26 +7273,37 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
                if _ba_sum.get('captured_vs_kernel_ratio') else ""),
             plain=_plain))
 
-    if cache_hit_gap > 10:
+    # Both rates are token-weighted, so a gap between them cannot come from a
+    # mix of short and long requests: it is two SGLang counters counting
+    # different token streams.  It once read "per-request 78%, per-token 0%"
+    # on a run that did not export prompt_tokens_total at all.
+    if abs(cache_hit_gap) > 10:
         findings_items.append(finding(
-            "CACHE HIT GAP",
-            f'A {cache_hit_gap:.0f} pp gap between gauge-active ({cache_hit:.1f}%) and '            f'token-weighted ({cache_hit_tw:.1f}%) cache hit reveals that even during '            f'active inference windows a large share of tokens require full recompute. '            f'<strong>Action:</strong> add a shared system-prompt prefix to all requests '            f'and verify LPM scheduling is active.',
-            plain=(f"Cache reuse looks better than it really is. When measured per-request "
-                   f"it's {cache_hit:.0f}%, but per-token it's only {cache_hit_tw:.0f}% — "
-                   f"meaning many requests are short cache hits with long uncached tails. "
-                   f"Recommended: add a shared prompt prefix across requests.")))
+            "CACHE HIT · COUNTERS DISAGREE",
+            f'Two token-weighted cache-hit measures differ by {abs(cache_hit_gap):.0f} pp: '
+            f'<code>prefill_cache ÷ (prefill_cache + prefill_compute)</code> = {cache_hit:.1f}% '
+            f'(the headline) and <code>cached_tokens_total ÷ prompt_tokens_total</code> = '
+            f'{cache_hit_tw:.1f}%. They count different token streams — '
+            f'<code>prompt_tokens_total</code> can include every prompt token, while '
+            f'<code>prefill_cache</code> counts prompt tokens served from cache at prefill — so '
+            f'the difference reflects the counters, not request sizes. '
+            f'<strong>Action:</strong> use the headline; compare runs only on the same counter.',
+            plain=(f"Two ways of counting cache reuse disagree ({cache_hit:.0f}% vs "
+                   f"{cache_hit_tw:.0f}%). Both count tokens, from different SGLang counters, so "
+                   f"the gap does not mean requests mix short hits with long misses. The "
+                   f"{cache_hit:.0f}% headline is the one to use.")))
     elif cache_hit > 0:
         if cache_hit < 40:
             findings_items.append(finding(
                 "CACHE HIT",
                 f'Cache hit is low ({cache_hit:.1f}%). Inspect prompt prefix sharing, '                f'HiCache warm-up, and KV eviction pressure.',
-                plain=(f"Only {cache_hit:.0f}% of prompts are being served from cache — the "
+                plain=(f"Only {cache_hit:.0f}% of prompt tokens are being served from cache — the "
                        f"rest are recomputed from scratch. Recommended: check whether prompts "
                        f"share a common prefix, and give the cache more time to warm up.")))
         else:
             findings_items.append(finding(
                 "CACHE HIT",
-                f'Cache-hit gauge-active is strong ({cache_hit:.1f}%). Remaining latency '                f'is more likely from prefill compute, HBM pressure, or queue-time.',
+                f'Cache hit is strong ({cache_hit:.1f}% of prefill tokens served from cache). Remaining latency '                f'is more likely from prefill compute, HBM pressure, or queue-time.',
                 plain=(f"Cache reuse is healthy ({cache_hit:.0f}% hit rate). If latency is "
                        f"still high, the bottleneck isn't the cache — look at GPU compute, "
                        f"GPU memory pressure, or request queuing.")))
@@ -8283,7 +8336,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
             # request list so a Prometheus-sourced CSV that *does* carry
             # cumulative byte counters still works.
             "rd_bw_mbs", "wr_bw_mbs",
-            "read_bytes", "write_bytes",
+            "read_bytes", "write_bytes", "rd_bytes", "wr_bytes",
             "rd_iops", "wr_iops", "read_iops", "write_iops",
             "rd_lat_ms", "wr_lat_ms", "read_lat_ms", "write_lat_ms",
             "r_await", "w_await", "await",
@@ -8296,11 +8349,17 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         _nvme_wr_mbps = list(_nvme_raw.get("wr_bw_mbs") or [])
         _nvme_rd_bw_t = list(_nvme_time)
         _nvme_wr_bw_t = list(_nvme_time)
-        if not _nvme_rd_mbps and _nvme_raw.get("read_bytes"):
-            _nvme_rd_bw_t, _rd_rate = _rate_with_time(_nvme_raw["read_bytes"], _nvme_time)
+        # A Prometheus-sourced CSV names its counters rd_bytes / wr_bytes (the
+        # Interactive tab's spelling).  Only read_bytes / write_bytes were
+        # tried, so such a run had no L3 line here while Interactive charted
+        # L3 bandwidth from the same file.
+        _rd_bytes = _nvme_raw.get("read_bytes") or _nvme_raw.get("rd_bytes")
+        _wr_bytes = _nvme_raw.get("write_bytes") or _nvme_raw.get("wr_bytes")
+        if not _nvme_rd_mbps and _rd_bytes:
+            _nvme_rd_bw_t, _rd_rate = _rate_with_time(_rd_bytes, _nvme_time)
             _nvme_rd_mbps = [v / 1e6 for v in _rd_rate]
-        if not _nvme_wr_mbps and _nvme_raw.get("write_bytes"):
-            _nvme_wr_bw_t, _wr_rate = _rate_with_time(_nvme_raw["write_bytes"], _nvme_time)
+        if not _nvme_wr_mbps and _wr_bytes:
+            _nvme_wr_bw_t, _wr_rate = _rate_with_time(_wr_bytes, _nvme_time)
             _nvme_wr_mbps = [v / 1e6 for v in _wr_rate]
 
         # IOPS — collector emits per-sample gauge already (rd_iops/wr_iops),
@@ -13099,7 +13158,7 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
     _act_prefill = ("<b>Chunked prefill</b> — <code>--chunked-prefill-size 4096</code><br>"
                     "<span class=\"sub\">Interleaves prefill chunks with decode steps, reducing perceived TTFT without changing throughput.</span>")
     _act_prefix = ("<b>Add shared system-prompt prefix</b><br>"
-                   f"<span class=\"sub\">Raises token-weighted hit from {cache_hit_tw:.0f}% toward gauge {cache_hit:.0f}%, "
+                   f"<span class=\"sub\">Raises the {cache_hit:.0f}% cache hit (prefill tokens served from cache), "
                    "cutting prefill recompute for recurring prompt prefixes.</span>")
     _act_l2 = ("<b>Expand DRAM L2 HiCache allocation</b><br>"
                f"<span class=\"sub\">DRAM at {dram_total_bw/max(dram_peak_cap,1)*100:.0f}% util has headroom. More L2 absorbs KV before L3, "
@@ -13979,8 +14038,10 @@ def build_executive_summary_html(raw_dir: Path, run_label: str = "",
         kpi_card("Cache hit",
                  _fmt_num(cache_hit, "%", 1),
                  (f"{_cache_hit_formula} · "
-                  f"{_fmt_num(cache_hit_tw, '%', 1)} token-weighted, "
-                  f"{_fmt_num(cache_hit_prefill_token_weighted, '%', 1)} prefill-only"),
+                  + (f"{_fmt_num(cache_hit_tw, '%', 1)} cached/prompt (different counter), "
+                     if cache_hit_tw_available else
+                     "cached/prompt not exported, ")
+                  + f"{_fmt_num(cache_hit_prefill_token_weighted, '%', 1)} prefill-only"),
                  accent=True) +
         # Mean-latency tiles restored: the p50/p90/p99 distribution
         # lives in the Bottleneck Analysis / Executive-overview charts,
@@ -15573,6 +15634,8 @@ def build_combined_report(
     # corrupt that payload and make the whole End Report tab disappear.  Child
     # reports handle zero/no-data L3 sections before embedding.
     combined = _amoprof_storage_label_cleanup(combined, l3_backend_class)
+    # Last step: no secret or Prometheus address from the run reaches the page.
+    combined = _scrub_html(combined, raw_dir)
     out_html.write_text(combined, encoding='utf-8')
     log.info("combined: wrote %s (%d KB)", out_html, len(combined) // 1000)
     return out_html

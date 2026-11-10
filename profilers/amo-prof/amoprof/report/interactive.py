@@ -34,6 +34,34 @@ except Exception:
         reconcile_l3_io = None  # type: ignore
 
 try:
+    from amoprof.config_checks import declared_benchmark as _declared_benchmark
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_cc
+        from pathlib import Path as _P_cc
+        _sys_cc.path.insert(0, str(_P_cc(__file__).resolve().parents[2]))
+        from amoprof.config_checks import declared_benchmark as _declared_benchmark
+    except Exception:
+        def _declared_benchmark(setup, cli_value=""):  # type: ignore
+            for _k in ("Application / Benchmark", "Benchmark", "Application"):
+                _v = str((setup or {}).get(_k, "") or "").strip()
+                if _v and _v.lower() not in ("unknown", "none", "n/a", "default"):
+                    return _v
+            return ""
+
+try:
+    from amoprof.redact import scrub_html as _scrub_html
+except Exception:  # pragma: no cover - report module run as a script
+    try:
+        import sys as _sys_rd
+        from pathlib import Path as _P_rd
+        _sys_rd.path.insert(0, str(_P_rd(__file__).resolve().parents[2]))
+        from amoprof.redact import scrub_html as _scrub_html
+    except Exception:
+        def _scrub_html(html, raw_dir=None, extra=None):  # type: ignore
+            return html
+
+try:
     from amoprof.report.common_kpis import (
         compute_common_kpis, apply_common_kpis_to_html, write_common_kpis_json,
         compute_cache_hit_kpis,
@@ -3174,11 +3202,9 @@ def build_report(raw_dir: Path, out_html: Path,
         setup["Default profile"] = "SGLang DeepSeek-R1-70B HiCache reference launch; defaulted fields are assumed, not observed"
         setup["Defaulted fields"] = ", ".join(defaulted)
 
-    # Prefer a user-facing application/benchmark label from setup_details.json;
-    # do not show Prometheus instance as a setup row.
-    app_bench = (setup.get("Application / Benchmark") or setup.get("Application") or
-                 setup.get("Benchmark") or setup.get("benchmark") or setup.get("application") or
-                 setup.get("Instance") or sglang_sum.get("instance") or "unknown")
+    # Only a declaration names the workload; the Prometheus instance it once
+    # fell back to is not one.
+    app_bench = _declared_benchmark(setup) or "not declared"
     setup["Application / Benchmark"] = app_bench
     setup.pop("Instance", None)
 
@@ -3341,7 +3367,12 @@ def build_report(raw_dir: Path, out_html: Path,
             _kpi_tile("Throughput mean", _tp_mean_val, "tok/s" if _tp_mean_val != "N/A" else "", _tp_mean_note),
             _kpi_tile("Throughput p50", f"{float(_tp_p50 or 0):.1f}" if _tp_p50 else "N/A", "tok/s" if _tp_p50 else "", "Median of active sglang_gen_throughput samples"),
             _kpi_tile("Cache hit", f"{float(sglang_sum.get('cache_hit_pct', sglang_sum.get('cache_hit_rate_realtime_pct', 0)) or 0):.1f}",
-                      "%", f"primary={sglang_sum.get('cache_hit_calc_method', 'canonical')} · prefill={float(sglang_sum.get('cache_hit_prefill_token_weighted_pct', 0) or 0):.1f}% · cached/prompt={float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}%"),
+                      "%", f"primary={sglang_sum.get('cache_hit_calc_method', 'canonical')} · prefill={float(sglang_sum.get('cache_hit_prefill_token_weighted_pct', 0) or 0):.1f}% · cached/prompt="
+                      # 0 means "not measured" unless prompt_tokens_total was exported.
+                      + (f"{float(sglang_sum.get('cache_hit_token_weighted_pct', 0) or 0):.1f}%"
+                         if sglang_sum.get("cache_hit_cached_prompt_available",
+                                           float(sglang_sum.get("cache_hit_token_weighted_denominator_tokens", 0) or 0) > 0)
+                         else "not exported")),
         ]
     # 4-value GPU util decomposition (matches cache-hit KPI shape).  Prefer
     # live timeseries; fall back to gpu_summary fields written by
@@ -4313,5 +4344,6 @@ VM activity = rate(node_vmstat_pgfault), rate(node_vmstat_pgmajfault), rate(node
         pass
     html = _amoprof_storage_label_cleanup(
         html, getattr(_l3_res, "backend_class", "") if _l3_res is not None else "")
+    html = _scrub_html(html, raw_dir)
     out_html.write_text(html, encoding="utf-8")
     return out_html
