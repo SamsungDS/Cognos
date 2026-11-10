@@ -35,7 +35,7 @@ jobs.
   builds and tests every component.
 - A change in one component's folder builds and tests only that component.
 - amo-prof and `deploy/ansible/` run only when their own folder changes.
-- Anything else (docs, the `cama` submodule bump) builds nothing; only "check version" runs, and on `main` also
+- Anything else (docs, for example) builds nothing; only "check version" runs, and on `main` also
   "publish dev set", which then republishes the previous set unchanged.
 - Tag, schedule and web pipelines run every job, except that tag pipelines skip "test amo-prof" and the ansible jobs
   (neither is part of a release). Images are still reused when their inputs are unchanged.
@@ -224,7 +224,7 @@ the repository's version wins; where one side deleted a file the other changed, 
 stays if the repository has it, and goes if the repository deleted it). This repository's changes elsewhere are kept.
 The merge request lists every file where the repository's version replaced a change made here. A component that cannot
 be merged for another reason fails the job and needs a merge request by hand; the others still sync.
-`deploy/ansible/` is owned by this repository and is not synced; `cama` is a submodule.
+`deploy/ansible/` is owned by this repository and is not synced; `cama` holds only a README for now.
 
 It runs only when `SYNC_COMPONENTS` is `true`, on `main`:
 
