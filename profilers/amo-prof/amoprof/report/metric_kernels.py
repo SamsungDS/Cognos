@@ -1146,8 +1146,14 @@ def window_counter_series(rows, candidates, meta: "dict | None" = None):
     _tcol = next((c for c in rows[0] if c and c.strip() == "time_sec"), None)
 
     def _num(r, c):
+        # `r.get(c) or "nan"` turned a numeric 0.0 (rows from a DataFrame, not
+        # CSV strings) into NaN, so a counter starting at 0 lost its first
+        # sample and read as not exported.
+        v = r.get(c)
+        if v is None or v == "":
+            return float("nan")
         try:
-            return float(r.get(c) or "nan")
+            return float(v)
         except (TypeError, ValueError):
             return float("nan")
 
