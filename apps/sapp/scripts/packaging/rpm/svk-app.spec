@@ -126,12 +126,10 @@ install -m 0644 %{_projectdir}/scripts/cognos.config ${INSTALL_PATH}/cognos.conf
 %{svk_install_dir}/cognos/rbac/*
 %dir %{svk_install_dir}/cognos/rbac/core/bin/
 %{svk_install_dir}/cognos/rbac/core/bin/*
-%dir %{svk_install_dir}/cognos/rbac/core/bin/rbac-service/
-%{svk_install_dir}/cognos/rbac/core/bin/rbac-service/*
+%{svk_install_dir}/cognos/rbac/core/bin/rbac-service/
 %dir %{svk_install_dir}/cognos/rbac/core/etc/
 %{svk_install_dir}/cognos/rbac/core/etc/*
 %dir %{svk_install_dir}/cognos/rbac/core/lib/
-%{svk_install_dir}/cognos/rbac/core/lib/*
 %dir %{svk_install_dir}/cognos/telegraf/
 %{svk_install_dir}/cognos/telegraf/*
 # systemd units
