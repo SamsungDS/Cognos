@@ -7,8 +7,8 @@ import unittest
 from helpers import REPO, TempDirTestCase, sh
 
 DEV_SET = str(REPO / "ci/dev-set.py")
-COMPONENTS = ["core", "mgmt-fw", "node", "ras", "slat", "me", "cxl", "cxl-mock", "sapp"]
-DIRS = {"core": "features/core", "mgmt-fw": "features/mgmt-fw", "node": "features/node",
+COMPONENTS = ["extras", "core", "mgmt-fw", "node", "ras", "slat", "me", "cxl", "cxl-mock", "sapp"]
+DIRS = {"extras": "utils/extras", "core": "features/core", "mgmt-fw": "features/mgmt-fw", "node": "features/node",
         "ras": "features/ras", "slat": "features/slat", "me": "features/me", "cxl": "features/cxl",
         "cxl-mock": "features/cxl", "sapp": "apps/sapp"}
 NAMES = {"cxl-mock": "cognos-cxl-mock", "sapp": "cognos-app"}
@@ -22,7 +22,10 @@ class DevSetTest(TempDirTestCase):
             for os_name in oses:
                 d = self.tmp / DIRS[c] / "build" / "artifacts" / os_name
                 d.mkdir(parents=True, exist_ok=True)
-                if os_name == "ubuntu24":
+                if c == "extras":  # gRPC and the Go modules, at their own versions
+                    files = (["cognos-grpc_1.59.2_amd64.deb", "cognos-go-modules_0.0.25_amd64.deb"] if os_name == "ubuntu24"
+                             else ["cognos-grpc-1.59.2-1.el10.x86_64.rpm", "cognos-go-modules-0.0.25-1.el10.x86_64.rpm"])
+                elif os_name == "ubuntu24":
                     files = [f"{name}_1.7.0~dev.{run}-ubuntu24.04_amd64.deb", f"{name}-dev_1.7.0~dev.{run}-ubuntu24.04_amd64.deb"]
                 else:
                     files = [f"{name}-1.7.0~dev.{run}-1.el10.ol10.2.x86_64.rpm"]
@@ -30,7 +33,7 @@ class DevSetTest(TempDirTestCase):
                     (d / f).write_text(f"{f}\n")
 
     def clean(self):
-        for top in ("features", "apps"):
+        for top in ("features", "apps", "utils"):
             sh("rm", "-rf", str(self.tmp / top))
 
     def results(self, failed=(), only=COMPONENTS):
@@ -39,9 +42,8 @@ class DevSetTest(TempDirTestCase):
                                     for c in only for o in ("ubuntu24", "ol10")}))
         return path
 
-    def dev_set(self, pipeline, results=None, previous=None, out="set", complete=False, check=True, extra=()):
+    def dev_set(self, pipeline, results=None, previous=None, out="set", complete=False, check=True):
         args = [DEV_SET, "--version", f"1.7.0~dev.{pipeline}", "--pipeline", str(pipeline), "--out", out]
-        args += [f"--extra={e}" for e in extra]
         if results:
             args += ["--results", str(results)]
         if previous:
@@ -61,7 +63,7 @@ class DevSetTest(TempDirTestCase):
         self.build(1)
         self.dev_set(100, self.results(), out="s1")
         s = self.packages("s1")
-        self.assertEqual(len(self.by(s)), 18)  # 9 components x 2 OSes, cxl and cxl-mock separate
+        self.assertEqual(len(self.by(s)), 20)  # 10 components x 2 OSes, cxl and cxl-mock separate
         for p in s["packages"]:
             self.assertTrue((self.tmp / "s1" / p["file"]).is_file())
             self.assertEqual(len(p["sha256"]), 64)
@@ -88,7 +90,7 @@ class DevSetTest(TempDirTestCase):
         by = self.by(self.packages("s2"))
         self.assertEqual(by[("core", "ubuntu24")], 100)
         self.assertEqual(by[("cxl", "ol10")], 101)
-        self.assertEqual(len(by), 18)
+        self.assertEqual(len(by), 20)
 
     def test_upstream_failure_publishes_no_set(self):
         self.build(1)
@@ -122,44 +124,38 @@ class DevSetTest(TempDirTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("missing: sapp/ubuntu24, sapp/ol10", result.stderr)
 
-    def grpc(self, name="cognos-grpc-1.59.2-1.el10.x86_64.rpm"):
-        path = self.tmp / "grpc" / name
-        path.parent.mkdir(exist_ok=True)
-        path.write_text("grpc")
-        return f"ol10={path}"
-
     def test_release_complete(self):
         self.build(1)
-        self.dev_set(300, out="r", complete=True, extra=[self.grpc()])
-        by = self.by(self.packages("r"))
-        self.assertEqual(len(by), 19)  # 18 + cognos-grpc for ol10
-        grpc = [p for p in self.packages("r")["packages"] if p["component"] == "grpc"][0]
-        self.assertEqual((grpc["os"], grpc["version"], grpc["file"]),
-                         ("ol10", "1.59.2", "ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm"))
-        self.assertTrue((self.tmp / "r/ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm").is_file())
+        self.dev_set(300, out="r", complete=True)
+        the_set = self.packages("r")
+        self.assertEqual(len(self.by(the_set)), 20)
+        extras = sorted((p["os"], p["file"], p["version"]) for p in the_set["packages"] if p["component"] == "extras")
+        self.assertEqual(extras, [
+            ("ol10", "ol10/cognos-go-modules-0.0.25-1.el10.x86_64.rpm", "0.0.25"),
+            ("ol10", "ol10/cognos-grpc-1.59.2-1.el10.x86_64.rpm", "1.59.2"),
+            ("ubuntu24", "ubuntu24/cognos-go-modules_0.0.25_amd64.deb", "0.0.25"),
+            ("ubuntu24", "ubuntu24/cognos-grpc_1.59.2_amd64.deb", "1.59.2"),
+        ])
+        core = [p for p in the_set["packages"] if p["component"] == "core"][0]
+        self.assertEqual(core["version"], "1.7.0~dev.300")
 
-    def test_release_needs_grpc(self):
-        self.build(1)
+    def test_release_needs_extras(self):
+        self.build(1, components=[c for c in COMPONENTS if c != "extras"])
         result = self.dev_set(300, out="r", complete=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertIn("grpc/ol10", result.stderr)
+        self.assertIn("missing: extras/ubuntu24", result.stderr)
 
-    def test_dev_set_keeps_previous_grpc_when_not_added(self):
+    def test_extras_not_built_keeps_the_previous_with_its_versions(self):
+        # extras is built only when utils/extras changes; other pipelines keep the previous set's.
         self.build(1)
-        self.dev_set(100, self.results(), out="s1", extra=[self.grpc()])
+        self.dev_set(100, self.results(), out="s1")
         self.clean()
         self.build(2, components=["cxl", "cxl-mock"])
         self.dev_set(101, self.results(only=["cxl", "cxl-mock"]), previous="s1", out="s2")
-        self.assertEqual(self.by(self.packages("s2"))[("grpc", "ol10")], 100)
-        self.assertIn("not added in this pipeline", self.packages("s2")["outcomes"]["grpc/ol10"])
-
-    def test_extra_must_be_grpc_for_ol10(self):
-        self.build(1)
-        for bad in ("ubuntu24=" + self.grpc().split("=", 1)[1], "ol10=" + str(self.tmp / "missing.rpm"),
-                    self.grpc("cognos-core-1.0.0-1.el10.x86_64.rpm")):
-            result = self.dev_set(100, self.results(), out="s", check=False, extra=[bad])
-            self.assertNotEqual(result.returncode, 0, bad)
-
+        s2 = self.packages("s2")
+        self.assertEqual(self.by(s2)[("extras", "ol10")], 100)
+        self.assertIn("not built in this pipeline; kept from pipeline 100", s2["outcomes"]["extras/ubuntu24"])
+        self.assertEqual(sorted({p["version"] for p in s2["packages"] if p["component"] == "extras"}), ["0.0.25", "1.59.2"])
 
 if __name__ == "__main__":
     unittest.main()

@@ -59,7 +59,7 @@ Stages: `build-images`, `build`, `test`, `scan`, `publish`, `release`.
 | check version | test | every pipeline; checks that `VERSION` is `MAJOR.MINOR` |
 | build ansible image, lint ansible | build-images, test | lint `deploy/ansible/` |
 
-Components: core, mgmt-fw, node, ras, slat, me, cxl and sapp. cama is not built here.
+Components: extras (gRPC and the Go modules, `utils/extras`), core, mgmt-fw, node, ras, slat, me, cxl and sapp. cama is not built here.
 
 "check version" makes sure every merge request has a pipeline, which "Pipelines must succeed" requires.
 
@@ -76,8 +76,8 @@ A component image depends only on its `scripts/docker/<os>.DOCKERFILE` and `scri
 - Tag does not exist (the Dockerfile or `scripts/dependencies/` changed): the image is built and pushed.
 - Build and test jobs use `<component>:<os>-<short sha>`, so overlapping pipelines never use each other's image.
 
-An image keeps the base OS and the Nexus packages (for example core and mgmt-fw) it was built with. Newer ones are
-picked up only when one of its two inputs changes.
+An image holds only the base OS and the operating system's packages. The Cognos packages a component builds
+against are installed by `build.sh` at build time (see Builds).
 
 ## Builds
 
@@ -85,11 +85,16 @@ picked up only when one of its two inputs changes.
 `<component dir>/build/artifacts/<os>/` for 14 days. "build cxl" builds both variants, release (`cognos-cxl`) and mock
 (`cognos-cxl-mock`).
 
-Upstream packages: every component except core and sapp builds against core, and cxl and me also against mgmt-fw.
-`build.sh` installs them from the first of: this pipeline's "build core" / "build mgmt-fw" artifacts (logged
-`upstream core: pipeline <version>`), the newest dev set (`upstream core: dev set <version>`), or the Nexus packages
-in the image (`upstream core: image <version>`). So a cxl-only change builds against the newest dev set's core and
-mgmt-fw, not the older ones in the image.
+Upstream packages: every component except extras, core and sapp builds against core; mgmt-fw also against extras
+(cognos-grpc, cognos-go-modules), cxl and me against extras and mgmt-fw. `build.sh` installs them from the first of:
+this pipeline's build artifacts (logged `upstream core: pipeline <version>`), the newest dev set
+(`upstream core: dev set <version>`), or packages already installed (`upstream core: installed <version>`); without
+any of them the build stops. So a cxl-only change builds against the newest dev set's extras, core and mgmt-fw.
+
+"build extras" builds `cognos-grpc` (gRPC 1.59.2) and `cognos-go-modules` (protoc-gen-go v1.36.0, protoc-gen-go-grpc
+v1.5.1, grpc-gateway and openapiv2 v2.25.1) from their public sources, at the versions of the internal packages, which
+they keep as their package versions (1.59.2 and 0.0.25). It runs only when `utils/extras` changes (and in tag,
+schedule and web pipelines); the gRPC sources are cached per OS.
 
 ## Versions
 
@@ -147,8 +152,8 @@ default `(branch|release)-.*` matches).
 ./build.sh -h
 ```
 
-The packages end up in `build/artifacts/<os>/`. The component Dockerfiles install dependencies from the internal
-Nexus, so a local Docker build needs the lab network.
+The packages end up in `build/artifacts/<os>/`. A local Docker build needs only internet access: the images install
+the operating system's packages, and extras downloads the gRPC and Go module sources.
 
 ## Dev sets
 
@@ -179,9 +184,8 @@ A dev set is a complete set of Cognos packages, every component for ubuntu24 and
 - Sets are created in pipeline order (`resource_group: dev-set`). If an older pipeline would still finish after a
   newer one, `ci/dev-set.py` refuses to replace the newer set and that job fails.
 - Dev sets are stored only in GitLab, as job artifacts; nothing is published to Nexus or to the package registry.
-- ol10 needs `cognos-grpc`, which is not built in this repository. "publish dev set" adds the version pinned in
-  `fetch-packages.py` (`GRPC_VERSION`) from Nexus to the ol10 part of the set (`ci/dev-set.py --extra`), so that a
-  deployment needs nothing but GitLab. If Nexus does not answer, the set keeps the previous set's `cognos-grpc`.
+- Every set has extras (`cognos-grpc`, `cognos-go-modules`) for both OSes, kept from the previous set when a pipeline
+  does not build it. Deploying needs `cognos-grpc` on ol10 only.
 - A merge request's packages are the artifacts of its build jobs (14 days): `fetch-packages.py --pipeline <id>`
   deploys them, with the newest dev set for the components the merge request did not build.
 
@@ -199,7 +203,7 @@ repositories' imported tags (so the first 1.6 release is `v1.6.3`).
 | 1. Propose | propose release | by hand, on any `main` pipeline | compares the newest dev set with the last release of the line (`ci/compat-check.sh`) and opens or updates one merge request from `release-bot/next` setting `VERSION` to the next `X.Y`: major if a public interface broke, else minor |
 | 2. Review | you | | merge it, or first edit `VERSION` in it to release a different version |
 | 3. Create | create release | the `main` push that changed `VERSION`; or by hand for the current line (the first release) | creates `release/X.Y`, the tag `vX.Y.P` and the label `backport-X.Y` |
-| 4. Publish | publish release | every `vX.Y.Z` tag pipeline, after every component built and tested on both OSes | adds `cognos-grpc` for ol10 (pinned, from Nexus; without it the job fails), uploads the packages, `set.json` and one `cognos-X.Y.Z-<os>.zip` per OS to the package registry (`cognos/X.Y.Z`, kept permanently), and creates the GitLab release (Deploy → Releases) linking them |
+| 4. Publish | publish release | every `vX.Y.Z` tag pipeline, after every component built and tested on both OSes | uploads the packages (extras included), `set.json` and one `cognos-X.Y.Z-<os>.zip` per OS to the package registry (`cognos/X.Y.Z`, kept permanently), and creates the GitLab release (Deploy → Releases) linking them |
 | 5. Backport | backport | every `main` push | for a merged merge request labelled `backport-X.Y`: cherry-picks it onto `release/X.Y` and opens a merge request into it; on a conflict it comments on the merge request and fails, and the backport is done by hand |
 | 6. Patch | tag patch | every push to `release/X.Y` (e.g. a merged backport) | tags `vX.Y.(P+1)` unless the commit is tagged, which runs step 4 |
 
@@ -298,8 +302,7 @@ When changing a CI script, add or update its test in the same merge request.
 ## Required settings
 
 CI/CD variables that hold internal addresses, so that the repository does not: `DEPLOY_MANAGEMENT_SERVER` and
-`DEPLOY_APPLICATION_SERVER` (the lab hosts of "deploy cognos"), and `NEXUS_URL` (the package server that
-`fetch-packages.py --grpc` downloads `cognos-grpc` for ol10 from). A job that needs one of them stops when it is not set.
+`DEPLOY_APPLICATION_SERVER` (the lab hosts of "deploy cognos"). The job stops when they are not set.
 
 | Setting | Where | Why |
 |---|---|---|
@@ -313,4 +316,4 @@ CI/CD variables that hold internal addresses, so that the repository does not: `
 
 ## Later
 
-Publishing releases to Nexus, and retiring the component repositories and the sync.
+Publishing the packages to GitHub, and retiring the component repositories and the sync.

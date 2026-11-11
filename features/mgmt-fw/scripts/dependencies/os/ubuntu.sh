@@ -51,30 +51,6 @@ package_manager() {
     eval "$INSTALL_STRING"
 }
 
-# Install SVK APT Repo (Nexus)
-configure_nexus() {
-    NEXUS_BASE_URL=http://ssg-nexus.msl.lab:8081
-    NEXUS_COMMON_URL="$NEXUS_BASE_URL/repository/svk_common"
-    NEXUS_APT_URL="$NEXUS_BASE_URL/repository/svk_apt_$ID${VERSION_ID%%.*}"
-    NEXUS_PUBKEY_PATH=/usr/share/keyrings/ssg-nexus.pgp
-
-    wget --no-verbose --output-document $NEXUS_PUBKEY_PATH  $NEXUS_COMMON_URL/public.pgp
-    echo "deb [arch=$(dpkg --print-architecture) \
-    signed-by=$NEXUS_PUBKEY_PATH] \
-    $NEXUS_APT_URL $UBUNTU_CODENAME main" > /etc/apt/sources.list.d/ssg-nexus.list
-    BUILD_DEPS=()
-    apt-get update
-
-    # Install cognos-core, cognos-extras packages from Nexus
-    BUILD_DEPS=(
-        'cognos-core'
-        'cognos-core-dev'
-        'cognos-grpc'
-        'cognos-go-modules'
-    )
-    package_manager
-}
-
 # Set PATH to include go bin dir
 set_go_path() {
     local GO_PROFILE="/etc/profile.d/go-$GO_VERSION.sh"
@@ -85,7 +61,6 @@ set_go_path() {
 }
 
 install_build_deps
-configure_nexus
 set_go_path
 
 # Post-install Docker optimizations

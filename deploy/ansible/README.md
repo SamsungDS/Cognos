@@ -207,10 +207,8 @@ The cognos packages to be installed should be placed in the artifacts directory 
 `scripts/fetch-packages.py` (Python 3 only) puts the packages for one OS (`ubuntu24` or `ol10`) into
 `artifacts/SVK/`. It removes
 any older `cognos-*` packages there first, copies only runtime packages (no `-dev`/`-devel`), and picks one cxl
-variant (`--mock` for `cognos-cxl-mock`). Everything comes from GitLab: on ol10, dev sets and releases include
-`cognos-grpc` (not built in this repository; the pipeline adds the version pinned in the script, `GRPC_VERSION`). For
-a set made before that, or a local build, it warns; `--grpc` then downloads only `cognos-grpc` from Nexus, which needs
-the lab network.
+variant (`--mock` for `cognos-cxl-mock`). Everything comes from GitLab or your own build: on ol10 that includes
+`cognos-grpc`, which this repository builds too (`utils/extras`).
 
 A release can also be downloaded in one piece: its release page (Deploy → Releases) links `cognos-<version>-<os>.zip`,
 which holds all of that OS's packages (ol10 with `cognos-grpc`) and `set.json`.

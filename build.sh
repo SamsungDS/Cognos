@@ -5,8 +5,8 @@
 set -euo pipefail
 
 ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-# Dependency order. cama and amo-prof are not built here.
-ALL_COMPONENTS=(core mgmt-fw node ras slat me cxl sapp)
+# Dependency order. extras: gRPC and the Go modules (utils/extras). cama and amo-prof are not built here.
+ALL_COMPONENTS=(extras core mgmt-fw node ras slat me cxl sapp)
 
 usage() {
     cat <<EOF
@@ -19,26 +19,29 @@ Builds the release packages of the given components, or of all of them
              operating system and have the component's dependencies installed
              (its scripts/dependencies/install.sh, as in the component image).
              Without --native, each component is built in a Docker container
-             from its scripts/docker/<os>.DOCKERFILE. Those Dockerfiles install
-             packages from the internal Nexus, so Docker mode needs the lab
-             network.
+             from its scripts/docker/<os>.DOCKERFILE. The images install only
+             the operating system's packages; extras downloads the gRPC and Go
+             module sources, so a build needs internet access.
   --os       ubuntu24 (default) or ol10.
   --mock     Build the cxl mock variant (cognos-cxl-mock). Other components
              ignore it.
   --test     Run the components' unit tests instead of building packages.
-             The reports stay in each component's build/reports/.
+             The reports stay in each component's build/reports/. extras has
+             no unit tests.
   -h         Show this help.
 
 Version: COGNOS_VERSION if set, else ci/version.sh (the vX.Y.Z tag on HEAD,
 else X.(Y+1).0~dev.0.local from VERSION).
 
-Upstream packages: before building or testing, the packages of core (and of mgmt-fw for
-cxl and me) are installed from the first of:
-  1. features/<upstream>/build/artifacts/<os>/, this pipeline's or your own
-     build (logged as "pipeline");
+Upstream packages: before building or testing, the packages a component builds
+against (core; extras and core for mgmt-fw; extras, core and mgmt-fw for cxl and me)
+are installed from the first of:
+  1. <upstream folder>/build/artifacts/<os>/, this pipeline's or your own build
+     (logged as "pipeline"), so building everything in order needs nothing else;
   2. the newest dev set, downloaded with deploy/ansible/scripts/fetch-packages.py
      (logged as "dev set"; UPSTREAM_DEV_SET=0 skips it);
-  3. the packages already installed, e.g. the image's (logged as "image").
+  3. the packages already installed on this machine (logged as "installed").
+If none has them, the build stops.
 EOF
 }
 
@@ -48,14 +51,24 @@ die() {
 }
 
 component_dir() {
-    if [[ $1 == sapp ]]; then echo "$ROOT/apps/sapp"; else echo "$ROOT/features/$1"; fi
+    case $1 in
+        sapp) echo "$ROOT/apps/sapp" ;;
+        extras) echo "$ROOT/utils/extras" ;;
+        *) echo "$ROOT/features/$1" ;;
+    esac
+}
+
+# The package that tells whether an upstream component is installed.
+upstream_package() {
+    if [[ $1 == extras ]]; then echo cognos-grpc; else echo "cognos-$1"; fi
 }
 
 # Upstream components whose packages a component builds against.
 upstreams() {
     case $1 in
-        core | sapp) ;;
-        cxl | me) echo core mgmt-fw ;;
+        extras | core | sapp) ;;
+        mgmt-fw) echo extras core ;;
+        cxl | me) echo extras core mgmt-fw ;;
         *) echo core ;;
     esac
 }
@@ -66,6 +79,7 @@ component_build_args() {
     case $1 in
         cxl) echo --release -b ${MOCK:+--mock} ;;
         sapp) echo -r ;;
+        extras) echo --build-grpc --build-go-package ;;
         *) echo --release ;;
     esac
 }
@@ -119,11 +133,15 @@ install_upstream() {
             echo "upstream $up: dev set $(show_packages "${pkgs[0]}" | cut -d' ' -f2)"
         else
             [[ ! -s $log ]] || echo "upstream $up: no dev set packages ($(tail -n 1 "$log"))"
+            local package version
+            package=$(upstream_package "$up")
             if [[ $PKG_EXT == deb ]]; then
-                echo "upstream $up: image $(dpkg-query -W -f '${Version}' "cognos-$up" 2>/dev/null || echo 'not installed')"
+                version=$(dpkg-query -W -f '${Version}' "$package" 2>/dev/null || true)
             else
-                echo "upstream $up: image $(rpm -q --qf '%{VERSION}-%{RELEASE}' "cognos-$up" 2>/dev/null || echo 'not installed')"
+                version=$(rpm -q --qf '%{VERSION}-%{RELEASE}' "$package" 2>/dev/null || true)
             fi
+            [[ -n $version ]] || die "upstream $up: not built here, not in a dev set and $package is not installed; build $up first (./build.sh $up)"
+            echo "upstream $up: installed $version"
             return
         fi
     fi
@@ -142,6 +160,10 @@ build_native() {
     [[ $os_id == "$OS" ]] || die "--native --os $OS, but this machine runs $os_id"
     dir=$(component_dir "$c")
     echo "== $([[ -n $TEST ]] && echo test || echo build) $c ($OS), version $COGNOS_VERSION"
+    if [[ -n $TEST && $c == extras ]]; then
+        echo "extras has no unit tests"
+        return
+    fi
     for up in $(upstreams "$c"); do
         install_upstream "$up"
     done
@@ -167,6 +189,9 @@ restore_owner() {
     [[ -d $ROOT/build ]] && dirs+=("$ROOT/build")
     for c in "${ALL_COMPONENTS[@]}"; do
         [[ -d $(component_dir "$c")/build ]] && dirs+=("$(component_dir "$c")/build")
+    done
+    for c in "$ROOT"/utils/extras/{grpc_v*,svk-grpc,svk-go-modules,rpmbuild}; do
+        [[ -d $c ]] && dirs+=("$c")
     done
     # sapp's debian/rules and its tests run npm and pytest inside apps/sapp.
     for c in cognos/ui/node_modules cognos/ui/build cognos/ui/coverage \
