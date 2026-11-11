@@ -111,9 +111,11 @@ of all the components, in dependency order, and collects them in `build/artifact
 ./build.sh --test                # run the components' unit tests instead of building packages
 ```
 
-Each component is built in a container from its own `scripts/docker/<os>.DOCKERFILE`. Those images install their
-build dependencies from the internal Nexus, so this needs the lab network. With `--native`, `build.sh` builds on the
-current machine instead, which must run the target OS and have the component's dependencies installed
+Each component is built in a container from its own `scripts/docker/<os>.DOCKERFILE`, which installs only the
+operating system's packages; a build needs Docker and internet access, nothing else. The first component, `extras`
+(`utils/extras`), builds gRPC 1.59.2 and the protobuf/gRPC Go code generators from their public sources; mgmt-fw,
+cxl and me build against them, and every component against the core built before it. With `--native`, `build.sh`
+builds on the current machine instead, which must run the target OS and have the component's dependencies installed
 (`scripts/dependencies/install.sh` in the component's folder). `./build.sh -h` shows all options.
 
 The packages get the version printed by `ci/version.sh`: the `vX.Y.Z` tag on the current commit, otherwise a

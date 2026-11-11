@@ -1,0 +1,7 @@
+# Build paths
+rpmbuild
+grpc_v*
+
+# Staging paths
+/svk-go-modules
+/svk-grpc

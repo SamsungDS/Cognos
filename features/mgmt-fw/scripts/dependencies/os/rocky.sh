@@ -69,23 +69,7 @@ package_manager() {
     eval "$INSTALL_STRING"
 }
 
-# Install SVK Yum Repo (Nexus)
-configure_nexus() {
-    NEXUS_YUM_REPO_FILE="http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$ID${VERSION_ID%%.*}.repo"
-    wget --no-verbose --output-document /etc/yum.repos.d/ssg-nexus.repo "$NEXUS_YUM_REPO_FILE"
-
-    # Install cognos-core, cognos-extras packages from Nexus
-    BUILD_DEPS=(
-        'cognos-core'
-        'cognos-core-devel'
-        'cognos-go-modules'
-        'cognos-grpc'
-    )
-    package_manager
-}
-
 install_build_deps
-configure_nexus
 
 # Farther cleanup if Docker environment
 if $DOCKER; then

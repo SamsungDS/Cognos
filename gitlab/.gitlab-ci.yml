@@ -131,9 +131,9 @@ variables:
     matrix:
       - OS: [ubuntu24, ol10]
 
-# Builds the release packages (build.sh). Upstream core and mgmt-fw packages
-# come from this pipeline's "build core" / "build mgmt-fw" if they ran, else
-# from the newest dev set, else from the image.
+# Builds the release packages (build.sh). Upstream packages (extras, core,
+# mgmt-fw) come from this pipeline's build jobs if they ran, else from the
+# newest dev set; without either, the build stops.
 .build:
   stage: build
   image:
@@ -225,6 +225,29 @@ variables:
 # lists the upstream builds; they are optional because a leaf-only change
 # does not run them.
 
+# --- extras ----------------------------------------------------------------
+# gRPC (cognos-grpc) and the protobuf/gRPC Go code generators (cognos-go-modules),
+# built from their public sources at the versions of the internal packages
+# (utils/extras/scripts/build.sh). Built only when utils/extras changes (and in
+# tag, schedule and web pipelines); otherwise mgmt-fw, cxl and me take them from
+# the dev set. The gRPC sources are cached per OS.
+.extras:
+  variables:
+    COMPONENT: extras
+    COMPONENT_DIR: utils/extras
+  rules:
+    - changes: [utils/extras/**/*]
+
+build extras image:
+  extends: [.image, .extras]
+build extras:
+  extends: [.build, .extras]
+  needs: ["build extras image"]
+  cache:
+    key: extras-grpc-$OS
+    paths:
+      - utils/extras/grpc_v*/
+
 # --- core ------------------------------------------------------------------
 .core:
   variables:
@@ -261,11 +284,11 @@ build mgmt-fw image:
   extends: [.image, .mgmt-fw]
 build mgmt-fw:
   extends: [.build, .mgmt-fw]
-  needs: ["build mgmt-fw image", {job: build core, optional: true}]
+  needs: ["build mgmt-fw image", {job: build extras, optional: true}, {job: build core, optional: true}]
 test mgmt-fw:
   extends: [.test, .mgmt-fw]
   rules: [!reference [.test, rules], !reference [.mgmt-fw, rules]]
-  needs: ["build mgmt-fw image", {job: build core, optional: true}]
+  needs: ["build mgmt-fw image", {job: build extras, optional: true}, {job: build core, optional: true}]
 scan mgmt-fw:
   extends: [.scan, .mgmt-fw]
   rules: [!reference [.scan, rules], !reference [.mgmt-fw, rules]]
@@ -360,11 +383,13 @@ build me image:
   extends: [.image, .me]
 build me:
   extends: [.build, .me]
-  needs: ["build me image", {job: build core, optional: true}, {job: build mgmt-fw, optional: true}]
+  needs: ["build me image", {job: build extras, optional: true}, {job: build core, optional: true},
+          {job: build mgmt-fw, optional: true}]
 test me:
   extends: [.test, .me]
   rules: [!reference [.test, rules], !reference [.me, rules]]
-  needs: ["build me image", {job: build core, optional: true}, {job: build mgmt-fw, optional: true}]
+  needs: ["build me image", {job: build extras, optional: true}, {job: build core, optional: true},
+          {job: build mgmt-fw, optional: true}]
   tags: [svk-me]
   before_script:
     - !reference [.test, before_script]
@@ -390,7 +415,8 @@ build cxl image:
   extends: [.image, .cxl]
 build cxl:
   extends: [.build, .cxl]
-  needs: ["build cxl image", {job: build core, optional: true}, {job: build mgmt-fw, optional: true}]
+  needs: ["build cxl image", {job: build extras, optional: true}, {job: build core, optional: true},
+          {job: build mgmt-fw, optional: true}]
   script:
     - ./build.sh --native cxl --os "$OS" $(if [ "$VARIANT" = mock ]; then echo --mock; fi)
   parallel:
@@ -400,7 +426,8 @@ build cxl:
 test cxl:
   extends: [.test, .cxl]
   rules: [!reference [.test, rules], !reference [.cxl, rules]]
-  needs: ["build cxl image", {job: build core, optional: true}, {job: build mgmt-fw, optional: true}]
+  needs: ["build cxl image", {job: build extras, optional: true}, {job: build core, optional: true},
+          {job: build mgmt-fw, optional: true}]
 scan cxl:
   extends: [.scan, .cxl]
   rules: [!reference [.scan, rules], !reference [.cxl, rules]]
@@ -489,6 +516,7 @@ scan sapp:
 .built and tested:
   needs:
     - {job: test ci, optional: true}
+    - {job: build extras, optional: true}
     - {job: build core, optional: true}
     - {job: build mgmt-fw, optional: true}
     - {job: build node, optional: true}
@@ -522,13 +550,9 @@ publish dev set:
     - gitlab/scripts/api.py job-results --pipeline "$CI_PIPELINE_ID" | tee results.json
     # The newest set: the newest successful "publish dev set" on main, whatever its pipeline's status.
     - gitlab/scripts/api.py newest-dev-set --out previous
-    # cognos-grpc is not built here: the pinned version from Nexus goes into the ol10 set, so that deploying needs
-    # nothing but GitLab. If Nexus does not answer, the set keeps the previous set's cognos-grpc.
-    - 'ARTIFACTS_DIR=grpc deploy/ansible/scripts/fetch-packages.py --os ol10 --grpc || echo "WARNING: cognos-grpc not fetched"'
-    - GRPC_RPM=$(ls grpc/cognos-grpc-*.rpm 2> /dev/null | head -n 1 || true)
     - >-
       ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --results results.json
-      --previous previous/dev-set ${GRPC_RPM:+--extra ol10=$GRPC_RPM} --out dev-set
+      --previous previous/dev-set --out dev-set
   artifacts:
     name: dev-set-$CI_PIPELINE_ID
     expire_in: 10 days
@@ -628,11 +652,8 @@ publish release:
     - !reference [.internal-ca, before_script]
     - !reference [.version, before_script]
   script:
-    # A release needs cognos-grpc for ol10 (from Nexus, pinned): without it this job fails.
-    - ARTIFACTS_DIR=grpc deploy/ansible/scripts/fetch-packages.py --os ol10 --grpc
     - >-
-      ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --complete
-      --extra "ol10=$(ls grpc/cognos-grpc-*.rpm | head -n 1)" --out release
+      ci/dev-set.py --version "$COGNOS_VERSION" --pipeline "$CI_PIPELINE_ID" --complete --out release
     - gitlab/scripts/api.py publish-release --dir release
 
 # ---------------------------------------------------------------------------

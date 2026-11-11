@@ -44,6 +44,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 # job-results: which jobs make up a component on one OS ({os}: ubuntu24 or ol10).
 COMPONENT_JOBS = {
+    "extras": ["build extras: [{os}]"],  # no unit tests
     "core": ["build core: [{os}]", "test core: [{os}]"],
     "mgmt-fw": ["build mgmt-fw: [{os}]", "test mgmt-fw: [{os}]"],
     "node": ["build node: [{os}]", "test node: [{os}]"],

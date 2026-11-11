@@ -1,0 +1,9 @@
+Source: svk-go-modules
+Section: utils
+Priority: optional
+Maintainer: matt.d@samsung.com <matt.d@samsung.com>
+
+Package: cognos-go-modules
+Architecture: amd64
+Depends: ${shlibs:Depends}, ${misc:Depends}, ${perl:Depends}
+Description: SVK Go Modules for gRPC and protobuf

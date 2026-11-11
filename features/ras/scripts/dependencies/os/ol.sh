@@ -45,7 +45,6 @@ install_packages() {
 }
 
 install_packages
-configure_nexus
 
 # Farther cleanup if Docker environment
 if [[ $DOCKER ]]; then

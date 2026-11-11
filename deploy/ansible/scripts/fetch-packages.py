@@ -10,22 +10,20 @@ Usage: deploy/ansible/scripts/fetch-packages.py --os ubuntu24|ol10 [--mock] [--o
   --pipeline <id>        the packages built by that pipeline, for example a merge request's; components it did
                          not build come from the newest dev set
   --local                the packages of your own ./build.sh, from build/artifacts/<os>/
-  --grpc                 only cognos-grpc for ol10, from Nexus at GRPC_VERSION (needs the lab network; the
-                         pipeline uses it to put cognos-grpc into dev sets and releases)
 
   --mock                 cognos-cxl-mock instead of cognos-cxl
-  --only <components>    only these, comma-separated: core,mgmt-fw,node,ras,slat,me,cxl,sapp
-  --with-dev             also the -dev/-devel packages (for building against them)
+  --only <components>    only these, comma-separated: extras,core,mgmt-fw,node,ras,slat,me,cxl,sapp
+  --with-dev             also the packages for building against them: -dev/-devel, cognos-go-modules, and
+                         cognos-grpc on ubuntu24
 
 Existing cognos-* packages in the destination are removed first, so the playbooks install exactly this set.
-Everything comes from GitLab: for ol10, dev sets and releases include cognos-grpc (not built in this repository; the
-pipeline adds the pinned version). If the packages have none, this says so; --grpc downloads it separately.
+extras is cognos-grpc and cognos-go-modules, built in this repository like the rest: cognos-grpc is needed to run
+Cognos on ol10 only, cognos-go-modules only to build it.
 
 Environment (defaults in brackets):
   COGNOS_GITLAB_URL   the GitLab that builds Cognos [in CI: CI_SERVER_URL]
   COGNOS_PROJECT      its project path [in CI: CI_PROJECT_PATH]
   GITLAB_TOKEN        only needed if the project or its pipelines are not public
-  NEXUS_URL           the package server, for --grpc only
   ARTIFACTS_DIR       [deploy/ansible/artifacts/SVK]
 
 Needs only Python 3 and its standard library.
@@ -45,22 +43,21 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-GRPC_VERSION = "1.59.2"
-
 ROOT = pathlib.Path(__file__).resolve().parents[3]   # deploy/ansible/scripts/ -> the repository root
 # No built-in addresses: in CI they come from GitLab's own variables, elsewhere they must be set.
 GITLAB = os.environ.get("COGNOS_GITLAB_URL") or os.environ.get("CI_SERVER_URL", "")
 PROJECT = os.environ.get("COGNOS_PROJECT") or os.environ.get("CI_PROJECT_PATH", "")
 API = f"{GITLAB}/api/v4/projects/{urllib.parse.quote(PROJECT, safe='')}"
-NEXUS = os.environ.get("NEXUS_URL", "").rstrip("/").removesuffix("/repository")
 DEST = pathlib.Path(os.environ.get("ARTIFACTS_DIR", ROOT / "deploy" / "ansible" / "artifacts" / "SVK"))
 SUFFIX = {"ubuntu24": ".deb", "ol10": ".rpm"}
 DEV_SET_JOB = "publish dev set"
 PACKAGE_COMPONENT = {
     "cognos-core": "core", "cognos-mgmt-fw": "mgmt-fw", "cognos-node": "node", "cognos-ras": "ras",
     "cognos-slat": "slat", "cognos-me": "me", "cognos-cxl": "cxl", "cognos-cxl-mock": "cxl", "cognos-app": "sapp",
-    "cognos-grpc": "grpc",
+    "cognos-grpc": "extras", "cognos-go-modules": "extras",
 }
+# Packages that are only for building against them, like -dev/-devel (per OS; None: on every OS).
+BUILD_ONLY = {"cognos-go-modules": None, "cognos-grpc": "ubuntu24"}
 
 
 def die(message):
@@ -98,7 +95,8 @@ def wanted(file_name, args):
     name, component = parse(file_name)
     if not component or not file_name.endswith(SUFFIX[args.os]):
         return False
-    if name.endswith(("-dev", "-devel")) and not args.with_dev:
+    build_only = name.endswith(("-dev", "-devel")) or (name in BUILD_ONLY and BUILD_ONLY[name] in (None, args.os))
+    if build_only and not args.with_dev:
         return False
     if component == "cxl" and name.startswith("cognos-cxl-mock") != args.mock:
         return False
@@ -187,28 +185,6 @@ def merge(base, overlay):
     return merged
 
 
-def grpc():
-    """cognos-grpc for ol10 from Nexus, at GRPC_VERSION. A short timeout: Nexus is only reachable from the lab.
-
-    Found with Nexus' search by name, never from a fixed URL: Nexus records a yum version with its release
-    (1.59.2-1.el10), so the matching rpm is the one whose file name has GRPC_VERSION right after the name."""
-    base = f"{NEXUS}/service/rest/v1/search/assets?repository=svk_yum_ol10&name=cognos-grpc"
-    token, urls = None, []
-    while True:
-        page = json.loads(get(base + (f"&continuationToken={urllib.parse.quote(token)}" if token else ""), timeout=60))
-        urls += [a["downloadUrl"] for a in page.get("items", [])]
-        token = page.get("continuationToken")
-        if not token:
-            break
-    rpm = next((u for u in urls if u.rsplit("/", 1)[1].startswith(f"cognos-grpc-{GRPC_VERSION}-")
-                and u.endswith(".rpm")), None)
-    if not rpm:
-        found = ", ".join(u.rsplit("/", 1)[1] for u in urls) or "none"
-        die(f"cognos-grpc {GRPC_VERSION} not found in Nexus (svk_yum_ol10; found: {found})")
-    print(f"cognos-grpc {GRPC_VERSION} from Nexus: {rpm.rsplit('/', 1)[1]}")
-    return {rpm.rsplit("/", 1)[1]: get(rpm, timeout=120)}
-
-
 def main():
     parser = argparse.ArgumentParser(usage=argparse.SUPPRESS, description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -221,23 +197,16 @@ def main():
     source.add_argument("--set", dest="dev_set")
     source.add_argument("--pipeline")
     source.add_argument("--local", action="store_true")
-    source.add_argument("--grpc", action="store_true")
     args = parser.parse_args()
     unknown = args.only - set(PACKAGE_COMPONENT.values())
     if unknown:
         die(f"unknown components: {', '.join(sorted(unknown))}")
 
-    if args.grpc and not NEXUS:
-        die("--grpc needs NEXUS_URL, the package server to download cognos-grpc from")
     if (args.release or args.dev_set or args.pipeline) and not (GITLAB and PROJECT):
         die("set COGNOS_GITLAB_URL (the GitLab that builds Cognos) and COGNOS_PROJECT (its project path); "
             "in a GitLab pipeline CI_SERVER_URL and CI_PROJECT_PATH are used")
 
-    if args.grpc:
-        if args.os != "ol10":
-            die("--grpc is for ol10 only (ubuntu24 does not need cognos-grpc)")
-        files = grpc()
-    elif args.release:
+    if args.release:
         files = from_release(args.release, args)
     elif args.dev_set:
         files = from_dev_set(args.dev_set, args)
@@ -257,16 +226,14 @@ def main():
             die(f"no packages in build/artifacts/{args.os}; run ./build.sh --os {args.os} first")
 
     found = {parse(f)[1] for f in files}
-    expected = args.only or set(PACKAGE_COMPONENT.values()) - {"grpc"}
-    if not args.grpc and expected - found - {"grpc"}:
-        print("WARNING: no packages for " + ", ".join(sorted(expected - found - {"grpc"})))
-    if args.os == "ol10" and not args.only and not args.grpc and "grpc" not in found:
-        print("WARNING: no cognos-grpc in these packages (sets published before it was added, or a local build); "
-              "the playbooks need it on ol10. Add it with: fetch-packages.py --os ol10 --grpc (needs the lab network)")
+    expected = args.only or set(PACKAGE_COMPONENT.values())
+    if args.os == "ubuntu24" and not args.with_dev:
+        expected = expected - {"extras"}  # nothing of it is needed to run Cognos there
+    if expected - found:
+        print("WARNING: no packages for " + ", ".join(sorted(expected - found)))
 
     DEST.mkdir(parents=True, exist_ok=True)
-    # --grpc adds to what is there: it replaces only an older cognos-grpc.
-    for old in sorted(DEST.glob(("cognos-grpc*" if args.grpc else "cognos-*") + SUFFIX[args.os])):
+    for old in sorted(DEST.glob("cognos-*" + SUFFIX[args.os])):
         print(f"  removed old {old.name}")
         old.unlink()
     for name, data in sorted(files.items()):

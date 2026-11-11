@@ -31,16 +31,3 @@ package_manager() {
     eval "$INSTALL_STRING"
 }
 
-# Install SVK Yum Repo (Nexus)
-configure_nexus() {
-    NEXUS_YUM_REPO_FILE="http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$ID${VERSION_ID%%.*}.repo"
-    wget --no-verbose --output-document /etc/yum.repos.d/ssg-nexus.repo "$NEXUS_YUM_REPO_FILE"
-
-    # Install cognos-core from Nexus
-    BUILD_DEPS=(
-        cognos-core
-        cognos-core-devel
-    )
-    package_manager
-}
-

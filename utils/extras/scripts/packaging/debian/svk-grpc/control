@@ -1,0 +1,10 @@
+Source: svk-grpc
+Section: utils
+Priority: optional
+Maintainer: matt.d@samsung.com <matt.d@samsung.com>
+
+Package: cognos-grpc
+Architecture: amd64
+Conflicts: libabsl-dev
+Depends: ${shlibs:Depends}, ${misc:Depends}, libc-ares-dev, libssl-dev, zlib1g-dev
+Description: SVK gRPC
