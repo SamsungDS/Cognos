@@ -321,8 +321,8 @@ def publish_release(args):
     print(f"Created release {tag}")
 
 
-# sync: monorepo folder -> component repository (on this GitLab). deploy/ansible/ is owned by this repository; cama is a
-# submodule.
+# sync: monorepo folder -> component repository (on this GitLab). deploy/ansible/ is owned by this repository; cama holds
+# only a README for now.
 COMPONENT_REPOS = {
     "core": ("features/core", "dfs/svk/core"),
     "mgmt-fw": ("features/mgmt-fw", "dfs/svk/mgmt-fw"),

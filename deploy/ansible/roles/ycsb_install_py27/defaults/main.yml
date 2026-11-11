@@ -1,5 +1,3 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 ycsb_install_py27_dependencies:
   oraclelinux:

@@ -55,10 +55,32 @@ class FetchTest(TempDirTestCase):
             jobs = [{"id": job, "name": "publish dev set"}] if job else []
             self.gitlab.route("GET", rf"{self.p}/pipelines/{p}/jobs\?per_page=100&scope\[\]=success", jobs)
 
-    def fetch(self, *args, check=True):
-        env = self.env(COGNOS_GITLAB_URL=self.gitlab.url, COGNOS_PROJECT="dfs/svk/cognos", NEXUS_URL=self.gitlab.url,
-                       ARTIFACTS_DIR=self.dest)
+    def fetch(self, *args, check=True, **settings):
+        """Runs the script with the fake GitLab and Nexus, unless settings replace them (None: not set at all)."""
+        values = {"COGNOS_GITLAB_URL": self.gitlab.url, "COGNOS_PROJECT": "dfs/svk/cognos", "NEXUS_URL": self.gitlab.url,
+                  "CI_SERVER_URL": None, "CI_PROJECT_PATH": None, **settings}
+        env = self.env(ARTIFACTS_DIR=self.dest, **{k: v for k, v in values.items() if v is not None})
+        for k, v in values.items():
+            if v is None:
+                env.pop(k, None)
         return sh("python3", str(self.root / "deploy/ansible/scripts/fetch-packages.py"), *args, env=env, check=check)
+
+    def test_no_built_in_addresses(self):
+        # Without the GitLab's address the script says what to set, and touches nothing.
+        result = self.fetch("--os", "ubuntu24", "--set", "latest", check=False, COGNOS_GITLAB_URL=None, COGNOS_PROJECT=None)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("set COGNOS_GITLAB_URL", result.stderr)
+        self.assertEqual(self.gitlab.requests, [])
+        result = self.fetch("--os", "ol10", "--grpc", check=False, NEXUS_URL=None)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--grpc needs NEXUS_URL", result.stderr)
+
+    def test_in_a_gitlab_pipeline_its_own_address_is_used(self):
+        self.pipelines((2, 20))
+        self.publish_set(20, 2)
+        self.fetch("--os", "ubuntu24", "--set", "latest", COGNOS_GITLAB_URL=None, COGNOS_PROJECT=None,
+                   CI_SERVER_URL=self.gitlab.url, CI_PROJECT_PATH="dfs/svk/cognos")
+        self.assertIn("cognos-core_1.7.0~dev.5-ubuntu24.04_amd64.deb", self.files())
 
     def files(self):
         return sorted(p.name for p in self.dest.iterdir())

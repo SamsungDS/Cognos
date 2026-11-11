@@ -1,6 +1,4 @@
 # Tasks file for ./roles/gf_check_deps
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 - name: Identify metrics collect scripts package
   ansible.builtin.find:

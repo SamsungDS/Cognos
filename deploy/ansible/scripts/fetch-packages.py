@@ -22,10 +22,10 @@ Everything comes from GitLab: for ol10, dev sets and releases include cognos-grp
 pipeline adds the pinned version). If the packages have none, this says so; --grpc downloads it separately.
 
 Environment (defaults in brackets):
-  COGNOS_GITLAB_URL   [https://cxl-gitlab.ssi.samsung.com]
-  COGNOS_PROJECT      [dfs/svk/cognos]
+  COGNOS_GITLAB_URL   the GitLab that builds Cognos [in CI: CI_SERVER_URL]
+  COGNOS_PROJECT      its project path [in CI: CI_PROJECT_PATH]
   GITLAB_TOKEN        only needed if the project or its pipelines are not public
-  NEXUS_URL           [http://ssg-nexus.msl.lab:8081], for --grpc only
+  NEXUS_URL           the package server, for --grpc only
   ARTIFACTS_DIR       [deploy/ansible/artifacts/SVK]
 
 Needs only Python 3 and its standard library.
@@ -48,9 +48,11 @@ import zipfile
 GRPC_VERSION = "1.59.2"
 
 ROOT = pathlib.Path(__file__).resolve().parents[3]   # deploy/ansible/scripts/ -> the repository root
-GITLAB = os.environ.get("COGNOS_GITLAB_URL", "https://cxl-gitlab.ssi.samsung.com")
-API = f"{GITLAB}/api/v4/projects/{urllib.parse.quote(os.environ.get('COGNOS_PROJECT', 'dfs/svk/cognos'), safe='')}"
-NEXUS = os.environ.get("NEXUS_URL", "http://ssg-nexus.msl.lab:8081").rstrip("/").removesuffix("/repository")
+# No built-in addresses: in CI they come from GitLab's own variables, elsewhere they must be set.
+GITLAB = os.environ.get("COGNOS_GITLAB_URL") or os.environ.get("CI_SERVER_URL", "")
+PROJECT = os.environ.get("COGNOS_PROJECT") or os.environ.get("CI_PROJECT_PATH", "")
+API = f"{GITLAB}/api/v4/projects/{urllib.parse.quote(PROJECT, safe='')}"
+NEXUS = os.environ.get("NEXUS_URL", "").rstrip("/").removesuffix("/repository")
 DEST = pathlib.Path(os.environ.get("ARTIFACTS_DIR", ROOT / "deploy" / "ansible" / "artifacts" / "SVK"))
 SUFFIX = {"ubuntu24": ".deb", "ol10": ".rpm"}
 DEV_SET_JOB = "publish dev set"
@@ -224,6 +226,12 @@ def main():
     unknown = args.only - set(PACKAGE_COMPONENT.values())
     if unknown:
         die(f"unknown components: {', '.join(sorted(unknown))}")
+
+    if args.grpc and not NEXUS:
+        die("--grpc needs NEXUS_URL, the package server to download cognos-grpc from")
+    if (args.release or args.dev_set or args.pipeline) and not (GITLAB and PROJECT):
+        die("set COGNOS_GITLAB_URL (the GitLab that builds Cognos) and COGNOS_PROJECT (its project path); "
+            "in a GitLab pipeline CI_SERVER_URL and CI_PROJECT_PATH are used")
 
     if args.grpc:
         if args.os != "ol10":

@@ -94,7 +94,7 @@ cognos_cleanup_enable_log_collection: false
 
 
 rbac_username: "super_admin"
-rbac_email: "super_admin@samsung.com"
+rbac_email: "super_admin@example.com"
 # Placeholder. Set the real value in group_vars/all/passwords.yml (ansible-vault) or with --extra-vars. See the top-level README.
 rbac_password: "CHANGE_ME_RBAC_PASSWORD"
 

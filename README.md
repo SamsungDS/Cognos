@@ -83,7 +83,7 @@ standalone Python package with its own version and is not part of the Cognos pac
 | `features/` | The Cognos components: `core`, `mgmt-fw`, `cxl`, `slat`, `ras`, `me`, `node`. |
 | `apps/sapp` | The Cognos management application: backend, user interface and RBAC service. |
 | `profilers/amo-prof` | The AMO-Prof profiler. |
-| `cama` | CaMa, a separate repository included as a git submodule. It is built and deployed separately. |
+| `cama` | CaMa (coming soon). |
 | `deploy/ansible/` | The Ansible playbooks and roles that deploy Cognos, and the deployment scripts. |
 | `utils/` | Utilities (empty for now). |
 | `ci/` | The CI scripts that do not depend on GitLab: version, images, dev sets, compatibility check. |
@@ -91,9 +91,10 @@ standalone Python package with its own version and is not part of the Cognos pac
 | `docs/` | Documentation of the CI. |
 | `build.sh` | Builds the packages of the components, or runs their unit tests. |
 | `VERSION` | The release line of the Cognos stack (`MAJOR.MINOR`). |
+| `LICENSE` | The Apache License, Version 2.0. |
+| `NOTICE` | The copyright notice. |
 
-Each component keeps its own `README.md` and its own `scripts/build.sh`. To include CaMa, clone with
-`git clone --recurse-submodules`, or run `git submodule update --init` in an existing clone.
+Each component keeps its own `README.md` and its own `scripts/build.sh`.
 
 ## Build
 
@@ -151,3 +152,9 @@ controller to running the deployment and setting the passwords it needs, are in
 ## Papers and publications
 
 - [Samsung Cognos Management Console white paper](https://download.semiconductor.samsung.com/resources/white-paper/04_01_Latest_Samsung_Cognos_Mgmt_Console_Whitepaper_10139392999591.pdf)
+
+## License
+
+Copyright 2026 Samsung Electronics Co., Ltd.
+
+Cognos is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

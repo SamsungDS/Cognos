@@ -146,7 +146,7 @@ def test_prometheus_device_query_is_valid_promql(monkeypatch):
         return io.BytesIO(json.dumps(body).encode())
 
     monkeypatch.setattr(cc.urllib.request, "urlopen", fake_urlopen)
-    devs = cc.prometheus_block_devices("http://prom:9090", "msl-ssg-dgx1.msl.lab", 0, 600)
+    devs = cc.prometheus_block_devices("http://prom:9090", "host-dgx1.example.com", 0, 600)
     assert devs == {"nvme6n1", "nvme1n1", "md0"}
-    assert "\\" not in seen["q"] and 'instance=~"msl-ssg-dgx1.msl.lab(:[0-9]+)?"' in seen["q"]
+    assert "\\" not in seen["q"] and 'instance=~"host-dgx1.example.com(:[0-9]+)?"' in seen["q"]
     assert cc.prometheus_block_devices("http://prom:9090", 'bad"host', 0, 600) is None

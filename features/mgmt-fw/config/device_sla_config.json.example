@@ -5,7 +5,7 @@
       {
         "dev_name": "DEV1-256G",
         "dev_size": "274877906944",
-        "node_name": "msl-ssg-cxl0",
+        "node_name": "host-cxl0",
         "dev_numa": 0,
         "sla_avg_latency_ns": 100
       }
@@ -17,14 +17,14 @@
       {
         "dev_name": "DEV3-256G",
         "dev_size": "274877906944",
-        "node_name": "msl-ssg-cxl0",
+        "node_name": "host-cxl0",
         "dev_numa": 2,
         "sla_avg_latency_ns": 200
       },
       {
         "dev_name": "DEV4-256G",
         "dev_size": "274877906944",
-        "node_name": "msl-ssg-cxl0",
+        "node_name": "host-cxl0",
         "dev_numa": 3,
         "sla_avg_latency_ns": 200
       }
@@ -36,7 +36,7 @@
       {
         "dev_name": "DEV5-256G",
         "dev_size": "274877906944",
-        "node_name": "msl-ssg-cxl0",
+        "node_name": "host-cxl0",
         "dev_numa": 4,
         "sla_avg_latency_ns": 400
       }

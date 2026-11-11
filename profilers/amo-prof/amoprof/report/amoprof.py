@@ -1278,10 +1278,10 @@ def _prom_discover_targets(base_url: str,
 
     Returns dict like:
       {
-        "sglang":        ["msl-ssg-dgx3.msl.lab:30000"],
-        "dcgm":          ["msl-ssg-dgx3.msl.lab:9400"],
-        "node":          ["msl-ssg-dgx3.msl.lab:9100"],
-        "ipmi_exporter": ["msl-ssg-dgx3.msl.lab:9290"],
+        "sglang":        ["host-dgx3.example.com:30000"],
+        "dcgm":          ["host-dgx3.example.com:9400"],
+        "node":          ["host-dgx3.example.com:9100"],
+        "ipmi_exporter": ["host-dgx3.example.com:9290"],
       }
     """
     try:
@@ -2208,8 +2208,8 @@ def _pick_gpu_node_instance(instances: list, engine_hosts: list) -> tuple:
 
     Several hosts publish amoprof_* series to one Prometheus -- the GPU nodes
     and the L3.5 memory node.  The first one alphabetically used to win, so a
-    run on msl-ssg-dgx1 took its host DRAM and block-device summaries from
-    msl-ssg-cx03.  The host serving SGLang in the window is the analysed node,
+    run on host-dgx1 took its host DRAM and block-device summaries from
+    host-cx03.  The host serving SGLang in the window is the analysed node,
     so the instance on that host is the one to read.
     """
     insts = sorted(str(i) for i in instances if i)
@@ -2262,8 +2262,8 @@ def collect_from_prometheus_api(
         output_dir    : If set, write raw CSVs for offline re-analysis
         instance      : Filter to a specific Prometheus instance label.
                         Matches the 'instance' label in your metrics.
-                        Example: "msl-ssg-dgx3.msl.lab:30000"
-                        Equivalent to: {instance="msl-ssg-dgx3.msl.lab:30000"}
+                        Example: "host-dgx3.example.com:30000"
+                        Equivalent to: {instance="host-dgx3.example.com:30000"}
         job           : Filter to a specific Prometheus job label.
                         Example: "sglang", "dcgm", "node_exporter"
         extra_labels  : Any additional label filters as a dict.
@@ -2271,15 +2271,15 @@ def collect_from_prometheus_api(
                         Multiple labels are ANDed together.
 
     Label filter examples:
-        --prom-instance msl-ssg-dgx3.msl.lab:30000
-          → {instance="msl-ssg-dgx3.msl.lab:30000"}
+        --prom-instance host-dgx3.example.com:30000
+          → {instance="host-dgx3.example.com:30000"}
 
-        --prom-instance msl-ssg-dgx3.msl.lab:30000 --prom-job sglang
-          → {instance="msl-ssg-dgx3.msl.lab:30000",job="sglang"}
+        --prom-instance host-dgx3.example.com:30000 --prom-job sglang
+          → {instance="host-dgx3.example.com:30000",job="sglang"}
 
         curl equivalent:
           curl -G 'http://105.128.44.21:9090/api/v1/query' \\
-            --data-urlencode 'query={instance="msl-ssg-dgx3.msl.lab:30000"}'
+            --data-urlencode 'query={instance="host-dgx3.example.com:30000"}'
 
     Returns:
         data dict compatible with extract_metrics()
@@ -2354,7 +2354,7 @@ def collect_from_prometheus_api(
     # Go's, where `\.` is not one of them, so a backslash-escaped dot is
     # rejected outright:
     #
-    #   instance=~"msl-ssg-cx03\.msl\.lab:.*"
+    #   instance=~"host-cx03\.msl\.lab:.*"
     #   -> 400 bad_data: parse error: unknown escape sequence U+002E '.'
     #
     # So this selector -- step 4 of _sel_for, and every fallback that reaches
@@ -24655,9 +24655,9 @@ def main():
     parser.add_argument("--prom-instance", default="", metavar="INSTANCE",
                         help="Filter all Prometheus queries to a specific instance label.\n"
                              "Equivalent to appending {instance='VALUE'} to every PromQL query.\n"
-                             "  Example: --prom-instance msl-ssg-dgx3.msl.lab:30000\n"
+                             "  Example: --prom-instance host-dgx3.example.com:30000\n"
                              "  Equivalent curl: curl -G '.../query' \\\n"
-                             "    --data-urlencode 'query={instance=\"msl-ssg-dgx3.msl.lab:30000\"}'\n"
+                             "    --data-urlencode 'query={instance=\"host-dgx3.example.com:30000\"}'\n"
                              "Use to isolate one DGX node when multiple nodes report to the same server.")
     parser.add_argument("--prom-job", default="", metavar="JOB",
                         help="Filter Prometheus queries to a specific job label.\n"

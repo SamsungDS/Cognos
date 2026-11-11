@@ -834,7 +834,7 @@ def report_filename(raw_dir: Path, report_type: str,
 
     ``amoprof_<version>_<date>_<time>_<gpunode>_<model>_<report_type>.html``
 
-    e.g. ``amoprof_v1.1.0_20260806_1430_msl-ssg-dgx1_gpt-oss-120b_combined.html``
+    e.g. ``amoprof_v1.1.0_20260806_1430_host-dgx1_gpt-oss-120b_combined.html``
 
     Sorts chronologically within a node/model, and every component an
     executive needs to identify a run is in the name — so a stashed report
@@ -3306,7 +3306,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Filter all PromQL queries to one Prometheus 'instance' "
                         "label. Use this to isolate one node when multiple "
                         "nodes report to the same Prometheus server. "
-                        "Example: --prom-instance msl-ssg-dgx3.msl.lab:30000")
+                        "Example: --prom-instance host-dgx3.example.com:30000")
     a.add_argument("--prom-job", default="",
                    help="Filter to a specific Prometheus job label. "
                         "Example: --prom-job sglang  (or dcgm, node, ipmi_exporter). "

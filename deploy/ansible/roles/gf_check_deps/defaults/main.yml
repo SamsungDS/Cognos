@@ -1,5 +1,3 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 gf_check_deps_java_version: '{{ gf_java_ver }}'
 gf_check_deps_jdk_package: '{{ gf_jdk_package_{{ ansible_distribution_file_variety | lower }} }}'

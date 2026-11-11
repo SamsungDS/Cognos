@@ -11,131 +11,12 @@ Cognos Memory Engine is responsible for optimal data movement, it is important t
 - Ubuntu 22.04
 - Ubuntu 24.04
 
-## Installation
+## Build
 
-The prefered method to install Cognos ME is through your OS package manager.
+me is built and tested with the rest of Cognos, from the repository root: see
+[Build](../../README.md#build) (`./build.sh me`, and `./build.sh --test me` for its unit tests).
 
-Cognos ME's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
-
-Release artifacts are also published to the [Cognos ME Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/svk-me/-/packages).
-
-Enable the SSG Nexus repo for your distro, then install the `cognos-me` packages via the package manager:
-
-### Ubuntu
-
-```bash
-wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
-apt update
-apt-get install cognos-core cognos-core-dev -y
-
-```
-
-### Rockylinux
-
-```bash
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install epel-release -y
-dnf install cognos-core cognos-core-devel -y
-```
-
-
-### Oracle Linux
-
-```bash
-source /etc/os-release
-MAJOR_VER="${VERSION_ID%%.*}"
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install cognos-core cognos-core-devel -y
-```
-
-## Build & Installation
-
-### Build Dependencies
-
-Execute the dependencies installation script to install all build dependencies for your current OS:
-
-```bash
-./scripts/dependencies/install.sh
-```
-
-### Build Cognos ME
-
-[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building Cognos ME:
-
-```bash
-./scripts/build.sh -h
-```
-
-To build Cognos ME, run unit tests and generate code coverage reports, execute:
-
-```bash
-./scripts/build.sh -t
-```
-
-To build and install Cognos ME to a specified directory, execute:
-
-```bash
-./scripts/build.sh -p install_dir
-```
-
-Note: Unless an absolute path is provided, the install path is relative to the `build` dir in the project root.
-
-### Release build
-
-To execute a release build, execute:
-
-```bash
-./scripts/build.sh -r
-```
-
-This will build and package RPM or Debian Packages (on Oracle Linux 10, Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
-
-- `cognos-me`: Runtime files
-- `cognos-me-dev(el)`: Development header files (pending development)
-
-### Manual Build
-
-Cognos ME manual build without tests:
-
-```bash
-mkdir build
-cd build
-cmake3 ../  -DCMAKE_INSTALL_PREFIX=me
-make install
-```
-
-In the above example, Cognos ME is installed to the `build/me` directory.
-
-### Unit Testing
-
-To build the Cognos ME with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
-
-```bash
-mkdir build
-cd build
-cmake3 ../  -DBUILD_TESTING=ON -DWITH_COVERAGE=ON -DCMAKE_INSTALL_PREFIX=svk_fw_distrib
-make install
-```
-
-Tests related files are generated in `build/tests`. To run the tests manually:
-
-```bash
-cd build/tests
-ctest
-```
-
-This will produce an output of all the unit tests that are under the `tests/` directory. To run each test individually, run the unit test binary located in a similar path to where the unit test source code is. For example: `build/tests/unit/framework/src/framework_ut`. Note: if you don't run ctest as a user that has write/read privileges to the `/var` or `/etc` directories, some tests may fail.
-
-To see the code coverage report for a source file, cd to the directory where the object files are located, ex. `build/framework/CMakeFiles/svkframework.dir/src`. Make sure the `.gcda` and `.gcno` files are there and run `gcovr` (must be installed with pip), giving the source code dir and current working dir as parameters:
-
-```bash
-cd build/framework/CMakeFiles/svkframework.dir/src
-gcovr -r {path_to_source_code} .
-```
-
-### AMT 2.0 build, deploy, test
+## AMT 2.0 build, deploy, test
 
 * The application/workload PID , NUMA nodes : slower NUMA node , faster NUMA node are to be furnished by the user prior to execution as mentioned in the below config file.
 * Present support is implemented for two tiers [slow NUMA node(CXL, remote memory), fast NUMA node(DRAM)]
@@ -157,14 +38,14 @@ To build the Cognos ME with AMT 2.0 scripts  execute a standard release build af
 
 This will create a .deb/rpm package in the build directory of the form:
 
-*/home/s1.mohapatra/oel_svkme/svk-me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb*
+*/path/to/cognos/features/me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb*
 
 #### AMT 2.0 installation
 
 The above package can be installed like:
 
 ```bash
-apt install /home/s1.mohapatra/oel_svkme/svk-me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb
+apt install /path/to/cognos/features/me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb
 ```
 
 Alternatively the deb/rpm package can be installed from Nexus
@@ -182,11 +63,11 @@ Following are the details that can be checked after installation:
 Installation
 ###############################
 
-root@msl-ssg-srf02:/home/s1.mohapatra/oel_svkme/svk-me# apt install /home/s1.mohapatra/oel_svkme/svk-me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb
+root@host-srf02:/path/to/cognos/features/me# apt install /path/to/cognos/features/me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb
 Reading package lists... Done
 Building dependency tree... Done
 Reading state information... Done
-Note, selecting 'cognos-me' instead of '/home/s1.mohapatra/oel_svkme/svk-me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb'
+Note, selecting 'cognos-me' instead of '/path/to/cognos/features/me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb'
 The following packages were automatically installed and are no longer required:
   libdbd-sqlite3-perl libdbi-perl sqlite3
 Use 'apt autoremove' to remove them.
@@ -195,7 +76,7 @@ The following NEW packages will be installed:
 0 upgraded, 1 newly installed, 0 to remove and 69 not upgraded.
 Need to get 0 B/230 kB of archives.
 After this operation, 894 kB of additional disk space will be used.
-Get:1 /home/s1.mohapatra/oel_svkme/svk-me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb cognos-me amd64 1.4.2-1-ge54a-ubuntu22.04 [230 kB]
+Get:1 /path/to/cognos/features/me/build/artifacts/ubuntu22/cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb cognos-me amd64 1.4.2-1-ge54a-ubuntu22.04 [230 kB]
 Selecting previously unselected package cognos-me.
 (Reading database ... 207763 files and directories currently installed.)
 Preparing to unpack .../cognos-me_1.4.2-1-ge54a-ubuntu22.04_amd64.deb ...
@@ -225,13 +106,13 @@ No containers need to be restarted.
 No user sessions are running outdated binaries.
 
 No VM guests are running outdated hypervisor (qemu) binaries on this host.
-root@msl-ssg-srf02:/home/s1.mohapatra/oel_svkme/svk-me# 
+root@host-srf02:/path/to/cognos/features/me# 
 
 ###############################
 Check after installation:
 ###############################
 
-root@msl-ssg-srf02:/usr/local/svk# tree feature_modules/me
+root@host-srf02:/usr/local/svk# tree feature_modules/me
 feature_modules/me
 ├── config
 │   ├── cme_config.json
@@ -281,7 +162,6 @@ Default:
 
 ```
 
-
 #### AMT 2.0 execution and testing:
 
 Once above installation steps are done and verified, following execution/testing steps can be performed:
@@ -291,8 +171,7 @@ Once above installation steps are done and verified, following execution/testing
 Modify to add PID and numa nodes:
 ###############################
 
-
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# cat amt2_config.json
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# cat amt2_config.json
 {
     "target_pid": 1942458,
     "monitor_interval_s": 10,
@@ -337,7 +216,6 @@ Explanation of the above config file:
 The above parameters are used by the monitoring and fsr movement scripts. Workload PID and workload pertaining numa node information are to be provided in the config file above.
 Remainder of the fields can be left to be default values.
 
-
 For example below is a cachebench workload with PID 1942458 and bound to numa node 0 and 2; with numa node 0 as fast_numa_node and numa node 2 as slow_numa_node:
 
 ```bash
@@ -346,9 +224,9 @@ For example below is a cachebench workload with PID 1942458 and bound to numa no
 Workload details: PID, numa node bindings
 ###############################
 
-root@msl-ssg-srf02:/home/s1.mohapatra/poc_cat2/cachebench# numactl --weighted-interleave=0,2  CacheLib/opt/cachelib/bin/cachebench --json_test_config test_dram_cxl_1kb.json --report_api_latency &
+root@host-srf02:~/poc_cat2/cachebench# numactl --weighted-interleave=0,2  CacheLib/opt/cachelib/bin/cachebench --json_test_config test_dram_cxl_1kb.json --report_api_latency &
 [1] 1942458
-root@msl-ssg-srf02:/home/s1.mohapatra/poc_cat2/cachebench# ===JSON Config===
+root@host-srf02:~/poc_cat2/cachebench# ===JSON Config===
 {
   "cache_config": {
     "cacheSizeMB": 170536, 
@@ -371,7 +249,6 @@ root@msl-ssg-srf02:/home/s1.mohapatra/poc_cat2/cachebench# ===JSON Config===
     "distribution": "zipfian"
   }
 }
-
 
 Welcome to OSS version of cachebench
 Created 128,000,000 keys in 4.05 mins
@@ -401,7 +278,6 @@ cd /usr/local/svk/feature_modules/me/scripts/amt2_scripts
 
 Example runs for the above two scripts below:
 
-
 ```bash
 ###############################
 Start amt2 scripts: Need PID, numa node info for workload
@@ -409,9 +285,9 @@ Start amt2 scripts: Need PID, numa node info for workload
 
 - Monitor script:
 
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls
 amt2_cleanup.sh  amt2_config.json  memory_monitor.sh  memory_mover_fsr.py  memory_profiler.py
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ./memory_monitor.sh
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ./memory_monitor.sh
 DAMON is not turned on
 [+] Starting DAMON on Kernel 6.11 for PID 1942458...
 [+] Monitoring active. Snapshots every 10s...
@@ -425,14 +301,13 @@ DAMON is not turned on
 .
 [+] Tried_regions found, processing to csv...
 DAMON is not turned on
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# 
-
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# 
 
 - FSR Mover script:
 
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls
 amt2_cleanup.sh  amt2_config.json  memory_monitor.sh  memory_mover_fsr.py  memory_profiler.py  report_1942458
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts#  /usr/local/svk/venv/me/amt2/bin/python3 memory_mover_fsr.py
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts#  /usr/local/svk/venv/me/amt2/bin/python3 memory_mover_fsr.py
 --- Movement Report for PID 2095057 ---
 FSR size = 32 MB
 Movement interval = 20s
@@ -456,8 +331,7 @@ Total PROMOTED: 24493.98 MB | Total DEMOTED: 0.00 MB ...
 Total PROMOTED: 24493.98 MB | Total DEMOTED: 0.00 MB ...
 Total PROMOTED: 24493.98 MB | Total DEMOTED: 0.00 MB ...
 [-] PID 2095057 does not exist or is not accessible. Exiting.
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# 
-
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# 
 
 ```
 
@@ -472,9 +346,9 @@ During the run the scripts generate temporary workload profile data:
 Check during run:
 ###############################
 
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls
 amt2_cleanup.sh  amt2_config.json  memory_monitor.sh  memory_mover_fsr.py  memory_profiler.py  report_1942458
-root@msl-ssg-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls report_1942458/
+root@host-srf02:/usr/local/svk/feature_modules/me/scripts/amt2_scripts# ls report_1942458/
 access_map.1783733824.csv  access_map.1783733837.csv  access_map.1783733848.csv  access_map.1783733861.csv  access_map.1783733873.csv  access_map.1783733885.csv
 
 ```

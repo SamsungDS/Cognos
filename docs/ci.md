@@ -35,7 +35,7 @@ jobs.
   builds and tests every component.
 - A change in one component's folder builds and tests only that component.
 - amo-prof and `deploy/ansible/` run only when their own folder changes.
-- Anything else (docs, the `cama` submodule bump) builds nothing; only "check version" runs, and on `main` also
+- Anything else (docs, for example) builds nothing; only "check version" runs, and on `main` also
   "publish dev set", which then republishes the previous set unchanged.
 - Tag, schedule and web pipelines run every job, except that tag pipelines skip "test amo-prof" and the ansible jobs
   (neither is part of a release). Images are still reused when their inputs are unchanged.
@@ -224,7 +224,7 @@ the repository's version wins; where one side deleted a file the other changed, 
 stays if the repository has it, and goes if the repository deleted it). This repository's changes elsewhere are kept.
 The merge request lists every file where the repository's version replaced a change made here. A component that cannot
 be merged for another reason fails the job and needs a merge request by hand; the others still sync.
-`deploy/ansible/` is owned by this repository and is not synced; `cama` is a submodule.
+`deploy/ansible/` is owned by this repository and is not synced; `cama` holds only a README for now.
 
 It runs only when `SYNC_COMPONENTS` is `true`, on `main`:
 
@@ -243,8 +243,8 @@ The sync uses `RELEASE_BOT_TOKEN`: its merge requests and merge commits are made
 
 | Host | Group | What it runs |
 |---|---|---|
-| `DEPLOY_MANAGEMENT_SERVER`, default `msl-ssg-vm22.msl.lab` | `management_server` | controller (port 9999), REST server (port 8001) |
-| `DEPLOY_APPLICATION_SERVER`, default `msl-ssg-srf06.msl.lab` | `application_server` | node, svc-mgr, cmmh driver, the real cxl (srf06 has CXL devices) |
+| `DEPLOY_MANAGEMENT_SERVER` | `management_server` | controller (port 9999), REST server (port 8001) |
+| `DEPLOY_APPLICATION_SERVER` | `application_server` | node, svc-mgr, cmmh driver, the real cxl (it needs CXL devices) |
 
 `deploy/ansible/scripts/test-deploy.sh` does the work:
 
@@ -296,6 +296,10 @@ anything. Run the unit tests locally with `gitlab/scripts/tests/run.sh` (needs `
 When changing a CI script, add or update its test in the same merge request.
 
 ## Required settings
+
+CI/CD variables that hold internal addresses, so that the repository does not: `DEPLOY_MANAGEMENT_SERVER` and
+`DEPLOY_APPLICATION_SERVER` (the lab hosts of "deploy cognos"), and `NEXUS_URL` (the package server that
+`fetch-packages.py --grpc` downloads `cognos-grpc` for ol10 from). A job that needs one of them stops when it is not set.
 
 | Setting | Where | Why |
 |---|---|---|

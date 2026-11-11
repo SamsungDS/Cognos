@@ -227,13 +227,12 @@ The pipeline id is shown on the merge request's or the commit's pipeline page. D
 [docs/ci.md](../../docs/ci.md#dev-sets). Downloads need no token while the project and its pipelines are public;
 otherwise export `GITLAB_TOKEN`. Run `deploy/ansible/scripts/fetch-packages.py -h` for all options.
 
-#### From a release bundle or Nexus
+#### From a release bundle
 
 1. Enter $project_dir (`deploy/ansible`, from the repository root) and create a directory named artifacts.
     * cd deploy/ansible
     * mkdir artifacts
 2. Download the cognos packages into artifacts directory.
-    * Alternatively, fetch the packages from Nexus for the target OS, e.g. for Ubuntu 24.04: `bash scripts/release.sh --os ubuntu24`
 3. Enter artifacts directory.
     * cd ./artifacts
 4. Extract the packages, and packages in artifacts are listed as follows:

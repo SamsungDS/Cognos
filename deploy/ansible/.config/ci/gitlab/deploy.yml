@@ -1,8 +1,8 @@
 deployment pipeline:
   stage: deploy
   environment:
-    name: ssg-svkprod
-    url: http://$VM_NAME.msl.lab:$UI_PORT
+    name: cognos-dev
+    url: http://$VM_NAME.$LAB_DOMAIN:$UI_PORT
   trigger:
     include:
       - local: .config/ci/gitlab/deploy-targets.yml

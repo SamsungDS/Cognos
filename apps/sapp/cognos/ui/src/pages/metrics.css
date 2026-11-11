@@ -47,7 +47,7 @@
   font-family: 'Samsung Sharp Sans', sans-serif;
   font-weight: bold; 
 }
-.saphana-legend {
+.cpu-memory-legend {
   height: 50px;
 }
 .host-app-heading {
@@ -58,7 +58,7 @@
   font-family: 'Samsung Sharp Sans', sans-serif;
 }
 
-.sap-hana {
+.cpu-memory-usage {
   font-size: 22px;
   bottom: 0px;
   font-family: 'Samsung Sharp Sans', sans-serif;
@@ -107,13 +107,13 @@
   .dropdownn-app-server {
     width: 276px;
   }
-  .saphana-legend {
+  .cpu-memory-legend {
     height: 29px;
   }
   .host-app-heading {
     font-size: 18px;
   }
-  .sap-hana {
+  .cpu-memory-usage {
     font-size: 22px;
   }
   .memory-bandwidth {

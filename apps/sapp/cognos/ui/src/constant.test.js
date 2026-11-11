@@ -13,7 +13,7 @@ describe('mappedHostList', () => {
     const hostList = [
       { host: 'loaner-emr04', color: '#0077C8' },
       { host: 'msl-cti-emr06', color: '#AC55FF' },
-      { host: 'msl-stg-emr03', color: '#4F4F4F' },
+      { host: 'host-emr03', color: '#4F4F4F' },
     ];
 
     const hostToDeviceMapping = [
@@ -26,7 +26,7 @@ describe('mappedHostList', () => {
     expect(result).toEqual([
       { host: 'loaner-emr04', color: '#4F4F4F', isActive: true, "cluster": null },
       { host: 'msl-cti-emr06', color: '#4F4F4F', isActive: true, "cluster": null },
-      { host: 'msl-stg-emr03', color: '#4F4F4F', isActive: false, "cluster": null }, // Replaced with the next available host
+      { host: 'host-emr03', color: '#4F4F4F', isActive: false, "cluster": null }, // Replaced with the next available host
     ]);
   });
 
@@ -110,7 +110,7 @@ describe('fetchData', () => {
 
   test('calls setDataCallback with fetched data on success', async () => {
     // Mock data that the fetch will return
-    const mockData = [{ label: "msl-stg-emr02.msl.lab", value: "msl-stg-emr02.msl.lab" }];
+    const mockData = [{ label: "host-emr02.example.com", value: "host-emr02.example.com" }];
     
     // Mock the fetch response to resolve successfully
     global.fetch.mockResolvedValueOnce({

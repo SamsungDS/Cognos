@@ -407,7 +407,7 @@ const Metrics = () => {
                 className="fs-22"
                 style={{ display: "flex", alignItems: "baseline", height: 30 }}
               >
-                <h1 className="sap-hana">CPU vs Memory Usage</h1>
+                <h1 className="cpu-memory-usage">CPU vs Memory Usage</h1>
               </div>
               {memoryCpuDataState.length > 1 ? (
                 <Chart

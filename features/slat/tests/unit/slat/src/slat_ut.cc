@@ -750,8 +750,8 @@ TEST_F(ConfigTest, PublishSuccess) {
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
 
-  app_config.app_current_sla.host_name = "msl-ssg-dummy";
-  app_config.app_current_sla.device_name = "msl-ssg-dummy_0";
+  app_config.app_current_sla.host_name = "host-dummy";
+  app_config.app_current_sla.device_name = "host-dummy_0";
   app_config.app_current_sla.avgLatencyns = 1000;
   app_config.app_name = "app1";
   app_config.app_pid = "4321";
@@ -915,7 +915,7 @@ TEST_F(ConfigTest, SLATWithJSONException) {
   app_config.app_requested_sla_ns = 100;
   app_config.app_sla_tolerance_percent = 10;
   app_config.app_current_sla.host_name = invalid_utf8;
-  app_config.app_current_sla.device_name = "msl-ssg-dummy_0";
+  app_config.app_current_sla.device_name = "host-dummy_0";
   app_config.app_current_sla.avgLatencyns = 1000;
   app_config.app_name = "app1";
   app_config.app_pid = "4321";

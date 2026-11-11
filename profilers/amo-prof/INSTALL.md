@@ -25,8 +25,8 @@ tools. The package is installed editable (`pip install -e`), so it runs from
 the tree:
 
 ```bash
-git clone git@cxl-gitlab.ssi.samsung.com:dfs/svk/amo_prof.git   # or unzip a release
-cd amo_prof
+git clone https://github.com/SamsungDS/Cognos.git   # or unzip a release
+cd Cognos/profilers/amo-prof
 ./install.sh
 source ~/amoprof_venv/bin/activate
 amoprof --version
@@ -218,7 +218,7 @@ amoprof analyze \
 ```bash
 amoprof analyze \
   --prometheus-url http://PROM_HOST:9090 \
-  --prom-instance msl-ssg-dgx1.msl.lab:30000 \
+  --prom-instance host-dgx1.example.com:30000 \
   --start 2026-06-17T23:15:54Z \
   --end   2026-06-17T23:25:54Z \
   --prom-step 15s \

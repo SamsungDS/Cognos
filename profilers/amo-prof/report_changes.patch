@@ -221,7 +221,7 @@
 +amoprof_v1.1.81_20260813T0000Z-20260813T0145Z_ssi-gpubnode03_gemma-4-31b-it_end.html
 +
 +# Local collect with no window selected (falls back to generation time):
-+amoprof_v1.1.81_20260806_1556_msl-ssg-dgx1_gpt-oss-120b_combined.html
++amoprof_v1.1.81_20260806_1556_host-dgx1_gpt-oss-120b_combined.html
 +```
 +
 +| Field | Source |
@@ -5312,7 +5312,7 @@
 +
 +    ``amoprof_<version>_<date>_<time>_<gpunode>_<model>_<report_type>.html``
 +
-+    e.g. ``amoprof_v1.1.0_20260806_1430_msl-ssg-dgx1_gpt-oss-120b_combined.html``
++    e.g. ``amoprof_v1.1.0_20260806_1430_host-dgx1_gpt-oss-120b_combined.html``
 +
 +    Sorts chronologically within a node/model, and every component an
 +    executive needs to identify a run is in the name — so a stashed report

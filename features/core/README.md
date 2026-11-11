@@ -2,7 +2,7 @@
 
 ## Description
 
-SVK Core contains utilities and framework for [Management Framework](https://cxl-gitlab.ssi.samsung.com/dfs/svk/mgmt-fw) as well as other [SVK applications](https://cxl-gitlab.ssi.samsung.com/dfs/svk) to communicate with feature modules such as power throttling, [Converged Storage](https://cxl-gitlab.ssi.samsung.com/dfs/svk/converged), etc. Documentation for header files and APIs needed to add a feature module can be found on the [SVK Core Doxygen page](https://dfs.cxl-gitlab-pages.ssi.samsung.com/svk/core/). See [SVK Application/Feature module integration](#svk-applicationfeature-module-integration) for details related to integrating feature modules with SVK Core.
+SVK Core contains utilities and framework for [Management Framework](../mgmt-fw/README.md) as well as other Cognos components to communicate with feature modules such as power throttling, etc. See [SVK Application/Feature module integration](#svk-applicationfeature-module-integration) for details related to integrating feature modules with SVK Core.
 
 ### Supported OS List
 
@@ -11,132 +11,14 @@ SVK Core contains utilities and framework for [Management Framework](https://cxl
 - Ubuntu 24.04
 - Oracle Linux 10
 
-## Installation
+## Build
 
-The prefered method to install SVK Core is through your OS package manager.
-
-SVK Core's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
-
-Release artifacts are also published to the [SVK Core Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/core/-/packages).
-
-Enable the SSG Nexus repo for your distro, then install the `cognos-core` packages via the package manager:
-
-### Ubuntu
-
-```bash
-wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
-apt update
-apt-get install cognos-core cognos-core-dev -y
-
-```
-
-### Rockylinux
-
-```bash
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install epel-release -y
-dnf install cognos-core cognos-core-devel -y
-```
-
-### Oracle Linux
-
-```bash
-source /etc/os-release
-MAJOR_VER="${VERSION_ID%%.*}"
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install cognos-core cognos-core-devel -y
-```
-
-## Build & Installation
-
-### Build Dependencies
-
-Execute the dependencies installation script to install all build dependencies for your current OS:
-
-```bash
-./scripts/dependencies/install.sh
-```
-
-### Build SVK Core
-
-[After installing build dependencies](#build-dependencies), execute the `./scripts/build.sh` script. The `-h` option will show what options are available for building SVK Core:
-
-```bash
-./scripts/build.sh -h
-```
-
-To build SVK Core, run unit tests and generate code coverage reports, execute:
-
-```bash
-./scripts/build.sh -t
-```
-
-To build and install SVK Core to a specified directory, execute:
-
-```bash
-./scripts/build.sh -p install_dir
-```
-
-Note: Unless an absolute path is provided, the install path is relative to the `build` dir in the project root.
-
-### Release build
-
-To execute a release build, execute:
-
-```bash
-./scripts/build.sh -r
-```
-
-This will build and package RPM or Debian Packages (on Rockylinux or Ubuntu, respectively), which are staged in the `build/artifacts` dir in the project root. The packages produced include:
-
-- `cognos-core`: Runtime files
-- `cognos-core-dev(el)`: Development header files
-
-### Manual Build
-
-To build the SVK Framework library without tests:
-
-```bash
-mkdir build
-cd build
-cmake3 ../  -DCMAKE_INSTALL_PREFIX=svk_fw_distrib --fresh
-make install
-```
-
-In the above example, SVK Core is installed to the `build/svk_fw_distrib` directory.
-
-### Unit Testing
-
-To build the SVK Framework with tests (GTest) and code coverage, run the `cmake3` command with `-DBUILD_TESTING` and `-DWITH_COVERAGE` flags enabled:
-
-```bash
-mkdir build
-cd build
-cmake3 ../  -DBUILD_TESTING=ON -DWITH_COVERAGE=ON -DCMAKE_INSTALL_PREFIX=svk_fw_distrib --fresh
-make install
-```
-
-Tests related files are generated in `build/tests`. To run the tests manually:
-
-```bash
-cd build/tests
-ctest
-```
-
-This will produce an output of all the unit tests that are under the `tests/` directory. To run each test individually, run the unit test binary located in a similar path to where the unit test source code is. For example: `build/tests/unit/framework/src/framework_ut`. Note: if you don't run ctest as a user that has write/read privileges to the `/var` or `/etc` directories, some tests may fail.
-
-To see the code coverage report for a source file, cd to the directory where the object files are located, ex. `build/framework/CMakeFiles/svkframework.dir/src`. Make sure the `.gcda` and `.gcno` files are there and run `gcovr` (must be installed with pip), giving the source code dir and current working dir as parameters:
-
-```bash
-cd build/framework/CMakeFiles/svkframework.dir/src
-gcovr -r {path_to_source_code} .
-```
+core is built and tested with the rest of Cognos, from the repository root: see
+[Build](../../README.md#build) (`./build.sh core`, and `./build.sh --test core` for its unit tests).
 
 ## SVK Application/Feature module integration
 
-[Install SVK Core](#installation) to install the necessary headers and libraries for feature modules to use.
+Install the `cognos-core` and `cognos-core-dev` packages (see [Build](#build)) to get the headers and libraries for feature modules to use.
 
 This will install any headers and libs to `/usr/local/svk/core` for feature modules to use and link against.
 
