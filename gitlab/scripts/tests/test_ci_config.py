@@ -66,6 +66,8 @@ class CiConfigTest(unittest.TestCase):
         scan = CONFIG[CONFIG.index("\n.scan:"):CONFIG.index("\n# ----", CONFIG.index("\n.scan:"))]
         self.assertIn('- ./build.sh --native --upstream-only "$COMPONENT" --os "$OS"', scan)
         self.assertLess(scan.index("before_script:"), scan.index("script:\n    - wget"))
+        # No results from the server's analysis cache: it replays analyses made without the headers.
+        self.assertIn("-Dsonar.cfamily.analysisCache.mode=fs", scan)
 
         def job(name):
             start = CONFIG.index(f"\n{name}:\n") + 1
