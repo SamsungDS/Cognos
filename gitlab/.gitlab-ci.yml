@@ -219,7 +219,12 @@ variables:
     - wget --no-verbose -P /tmp "$SONAR_SCANNER_URL"
     - unzip -q "/tmp/${SONAR_SCANNER_URL##*/}" -d /opt/sonar-scanner
     - cd "$COMPONENT_DIR"
-    - /opt/sonar-scanner/*/bin/sonar-scanner -Dsonar.branch.name="$SONAR_BRANCH" $SONAR_ARGS
+    # A new, empty C/C++ analysis cache in every job instead of the one on the Sonar server: the server cache keeps
+    # the results of an analysis whose headers were missing and replays them while the sources are unchanged.
+    - mkdir -p "$CI_PROJECT_DIR/.cfamily-cache"
+    - >-
+      /opt/sonar-scanner/*/bin/sonar-scanner -Dsonar.branch.name="$SONAR_BRANCH" $SONAR_ARGS
+      -Dsonar.cfamily.analysisCache.mode=fs -Dsonar.cfamily.analysisCache.path="$CI_PROJECT_DIR/.cfamily-cache"
   rules:
     - if: $CI_PIPELINE_SOURCE != "push" || $CI_COMMIT_BRANCH != "main"
       when: never
