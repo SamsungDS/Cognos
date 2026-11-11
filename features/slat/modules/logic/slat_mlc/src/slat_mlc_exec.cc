@@ -8,7 +8,7 @@
 
 /**
  * The output of mlc --idle_latency output is of the format
- * root@msl-ssg-srf04:~#
+ * root@host-srf04:~#
 /usr/local/svk/feature_modules/slat/logic_modules/mlclogic/bin/mlc
 --idle_latency -b200m  -c2 -j2 Intel(R) Memory Latency Checker - v3.11b Command
 line parameters: --idle_latency -b200m -c2 -j2
@@ -52,7 +52,7 @@ std::string parseMLCIdleLatencyOutput(const std::string& cmd_output) {
  * given numa, parse for the value under the numa node's column of the first
  * line reported from numa node 0
  *
- * root@msl-ssg-srf04:~#
+ * root@host-srf04:~#
  /usr/local/svk/feature_modules/slat/logic_modules/mlclogic/bin/mlc
  --latency_matrix
  * Intel(R) Memory Latency Checker - v3.11b

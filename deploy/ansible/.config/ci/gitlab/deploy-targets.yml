@@ -1,4 +1,5 @@
-# Deployment targets: VM short names (<name>.msl.lab, same name in vSphere).
+# Deployment targets: VM short names (<name>.$LAB_DOMAIN, same name in vSphere). The names and the domain are
+# CI/CD variables of the project: DEPLOY_TARGET_OL10, DEPLOY_TARGET_UBUNTU24, LAB_DOMAIN.
 # To add a VM:
 #   1. add it to the TARGET_VM list of "restore vmware snapshot"
 #   2. add an "ansible-deploy[<os>]" job for it; <os> is the OS target the VM reports
@@ -11,19 +12,19 @@ restore vmware snapshot:
   parallel:
     matrix:
       - TARGET_VM:
-          - ssg-svkprod
-          - msl-ssg-vm53
+          - $DEPLOY_TARGET_OL10
+          - $DEPLOY_TARGET_UBUNTU24
 
 # Deployed from the shared docker runner.
 ansible-deploy[ol10]:
   extends: .ansible-deploy
   variables:
-    TARGET_VM: ssg-svkprod
+    TARGET_VM: $DEPLOY_TARGET_OL10
 
 # Deployed from the docker runner on the VM itself (runner tagged with the VM name).
 ansible-deploy[ubuntu24]:
   extends: .ansible-deploy
   tags:
-    - msl-ssg-vm53
+    - $DEPLOY_TARGET_UBUNTU24
   variables:
-    TARGET_VM: msl-ssg-vm53
+    TARGET_VM: $DEPLOY_TARGET_UBUNTU24

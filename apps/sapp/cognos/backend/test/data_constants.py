@@ -108,7 +108,7 @@ DUMMY_INIT_DATA = {
                     "type": "FM_DIRECT_CMMD",
                     "Hosts": [
                         {
-                            "host_name": "msl-ssg-cx03",
+                            "host_name": "host-cx03",
                             "host_port": 2,
                             "deinit_active": 1,
                             "host_port_type": "dh",
@@ -187,7 +187,7 @@ dummy_init_data = {
                         "type": "FM_DIRECT_CMMD",
                         "Hosts": [
                             {
-                                "host_name": "msl-ssg-cx03",
+                                "host_name": "host-cx03",
                                 "host_port": 2,
                                 "deinit_active": 1,
                                 "host_port_type": "dh",
@@ -230,7 +230,7 @@ dummy_init_data = {
                         "type": "FM_DIRECT_CMMH",
                         "Hosts": [
                             {
-                                "host_name": "msl-ssg-cx03",
+                                "host_name": "host-cx03",
                                 "host_port": 2,
                                 "deinit_active": 1,
                                 "host_port_type": "dh",

@@ -543,8 +543,8 @@ tools. The package is installed editable (`pip install -e`), so it runs from
 the tree:
 
 ```bash
-git clone git@cxl-gitlab.ssi.samsung.com:dfs/svk/amo_prof.git   # or unzip a release
-cd amo_prof
+git clone https://github.com/SamsungDS/Cognos.git   # or unzip a release
+cd Cognos/profilers/amo-prof
 ./install.sh
 source ~/amoprof_venv/bin/activate
 amoprof --version
@@ -666,7 +666,7 @@ amoprof analyze \
   --start 2026-06-17T23:15:54Z \
   --end   2026-06-17T23:25:54Z \
   --prom-step 15 \
-  --prom-instance msl-ssg-dgx1.msl.lab:30000 \
+  --prom-instance host-dgx1.example.com:30000 \
   --prefer local \
   --setup-details setup_details_sample.json \
   --combined-report
@@ -680,7 +680,7 @@ amoprof analyze \
   --start 2026-06-17T23:15:54Z \
   --end   2026-06-17T23:25:54Z \
   --prom-step 15 \
-  --prom-instance msl-ssg-dgx1.msl.lab:30000 \
+  --prom-instance host-dgx1.example.com:30000 \
   --nvme-device nvme2n1 \
   --output-dir ./prom_reports \
   --setup-details setup_details_sample.json \
@@ -1359,7 +1359,7 @@ amoprof_v1.19.8_20260813T0000Z-20260813T0145Z_ssi-gpubnode03_gemma-4-31b-it_inte
 amoprof_v1.19.8_20260813T0000Z-20260813T0145Z_ssi-gpubnode03_gemma-4-31b-it_end.html
 
 # Local collect with no window selected (falls back to generation time):
-amoprof_v1.19.8_20260806_1556_msl-ssg-dgx1_gpt-oss-120b_combined.html
+amoprof_v1.19.8_20260806_1556_host-dgx1_gpt-oss-120b_combined.html
 ```
 
 | Field | Source |
@@ -2893,9 +2893,9 @@ none of its series. amoprof tries the instance as given first, then the same
 host on any port, and prints which one answered:
 
 ```
-L3.5 node_exporter selector (as given): {instance="msl-ssg-cx03.msl.lab:9101"}
-L3.5 node_exporter selector (any exporter port on msl-ssg-cx03.msl.lab):
-    {instance=~"msl-ssg-cx03[.]msl[.]lab:[0-9]+"}
+L3.5 node_exporter selector (as given): {instance="host-cx03.example.com:9101"}
+L3.5 node_exporter selector (any exporter port on host-cx03.example.com):
+    {instance=~"host-cx03[.]msl[.]lab:[0-9]+"}
 ```
 
 The dot is a character class, not a backslash escape. A regex label value is a

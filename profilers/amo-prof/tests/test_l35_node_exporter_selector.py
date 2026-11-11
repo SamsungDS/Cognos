@@ -5,7 +5,7 @@ Run: python3 tests/test_l35_node_exporter_selector.py
 
 The question this answers came from a run whose flags were:
 
-    --l35-storage-instance msl-ssg-cx03.msl.lab:9101 \
+    --l35-storage-instance host-cx03.example.com:9101 \
     --l35-nvme-device nvme2c2n1
 
 and the answer, for v1.58.1, was NO -- for two independent reasons, both of
@@ -57,7 +57,7 @@ _inject = _NS["_prom_inject_selector"]
 _NVME_RE = _NS["_NVME_DEV_RE_PROM"]
 _family = _NS["_nvme_dev_family_sel"]
 
-HOST = "msl-ssg-cx03.msl.lab"
+HOST = "host-cx03.example.com"
 AMO_SEL = '{instance="%s:9101"}' % HOST
 # Built exactly as the module builds it: the dot as a character class.
 HOST_SEL = '{instance=~"' + HOST.replace(".", "[.]") + ':[0-9]+"}'
@@ -124,9 +124,9 @@ def main() -> int:
                mx, 3.4)
         _check("and it still matches only that host",
                bool(re.fullmatch(HOST_SEL.split('"')[1],
-                                 "msl-ssg-cx03.msl.lab:9100"))
+                                 "host-cx03.example.com:9100"))
                and not re.fullmatch(HOST_SEL.split('"')[1],
-                                    "other-host.msl.lab:9100"), True)
+                                    "other-host.example.com:9100"), True)
 
         print("\nDefect 4 — the named device is not on this host at all")
         # Stage 1 of the diagnostic compares only ONE namespace, so when the

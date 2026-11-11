@@ -2,10 +2,6 @@
 
 set -euo pipefail
 
-###### Default Vars #######
-NEXUS_URL="http://ssg-nexus.msl.lab:8081"
-###### Default Vars #######
-
 : "${NEXUS_URL:?NEXUS_URL is not set — export it before running this script}"
 
 declare -A PKG_NAME=(

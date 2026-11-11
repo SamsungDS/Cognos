@@ -274,14 +274,14 @@ def test_get_node_ids_success_2(mock_post, mock_validation):
         "cluster_info": [
             {
                 "node_info": [
-                    {"node_id": "10.105.81.34"},
-                    {"node_id": "ssl-ssg-v9m.msl.lab"},
+                    {"node_id": "10.0.0.34"},
+                    {"node_id": "host-v9m.example.com"},
                 ]
             }
         ]
     }
     node_ids = get_node_ids("127.0.0.1", 8080, "cluster123")
-    assert node_ids == ["10.105.81.34", "ssl-ssg-v9m.msl.lab"]
+    assert node_ids == ["10.0.0.34", "host-v9m.example.com"]
 
 
 @patch("requests.post")
@@ -513,11 +513,11 @@ def test_get_node_ids_timeout(mock_post):
 
 def test_is_valid_ip_or_fqdn():
     # Valid IPv4
-    assert is_valid_ip_or_fqdn("10.105.80.34") is True
+    assert is_valid_ip_or_fqdn("10.0.0.33") is True
     # Valid IPv6
     assert is_valid_ip_or_fqdn("2001:db8::ff00:42:8329") is True
     # Valid FQDN
-    assert is_valid_ip_or_fqdn("msl-ssg-vm53.msl.lab") is True
+    assert is_valid_ip_or_fqdn("host-vm53.example.com") is True
     assert is_valid_ip_or_fqdn("google.com") is True
     # Invalid Cases
     assert is_valid_ip_or_fqdn("invalid_domain") is False

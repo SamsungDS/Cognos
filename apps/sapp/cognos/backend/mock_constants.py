@@ -5,18 +5,18 @@ MOCK_CLUSTERS = ['CL_ID_1']
 
 MOCK_NODES = {
     'node_info': [
-        {'node_ip': '000.000.00.001', 'node_name': 'msl-ssg-srf01',
+        {'node_ip': '000.000.00.001', 'node_name': 'host-srf01',
          'node_port': '9998', 'status': 'online'},
-        {'node_ip': '000.000.00.003', 'node_name': 'msl-ssg-srf03',
+        {'node_ip': '000.000.00.003', 'node_name': 'host-srf03',
          'node_port': '9998', 'status': 'online'},
     ]
 }
 
-MOCK_CLUSTER_NODES = ["msl-ssg-srf01", "msl-ssg-srf03"]
+MOCK_CLUSTER_NODES = ["host-srf01", "host-srf03"]
 
 MOCK_DEVICES = {
-    "msl-ssg-srf01": [{'device_id': 33638416328448, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:27:00.0'}],
-    "msl-ssg-srf03": [
+    "host-srf01": [{'device_id': 33638416328448, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:27:00.0'}],
+    "host-srf03": [
         {'device_id': 33638416328448, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:27:00.0'},
         {'device_id': 33638416341504, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:5a:00.0'},
         {'device_id': 33638416369152, 'vendor_device_type': 'CMM-H', 'pcie_addr': '0000:c6:00.0'},
@@ -55,7 +55,7 @@ BASE_DEVICE_INFO = {
 }
 
 MOCK_DEVICE_INFO = {
-    "msl-ssg-srf01": {
+    "host-srf01": {
         33638416328448: {
             'api_version': 1.0,
             'device_id': 33638416328448,
@@ -92,7 +92,7 @@ MOCK_DEVICE_INFO = {
             }
         }
     },
-    "msl-ssg-srf03": {
+    "host-srf03": {
         33638416369152: {
             'api_version': 1.0,
             'device_id': 33638416369152,
@@ -142,11 +142,11 @@ MOCK_EVENTS = [
             "process": "analytics-service"
         },
         "cluster_name": "CL_ID_1",
-        "node_name": "msl-ssg-srf01",
+        "node_name": "host-srf01",
         "category": "performance",
         "domain": "infrastructure",
         "severity": "critical",
-        "source": "msl-ssg-srf01",
+        "source": "host-srf01",
         "source_type": "node"
     },
     {
@@ -158,11 +158,11 @@ MOCK_EVENTS = [
             "available_gb": "4"
         },
         "cluster_name": "CL_ID_1",
-        "node_name": "msl-ssg-srf01",
+        "node_name": "host-srf01",
         "category": "storage",
         "domain": "infrastructure",
         "severity": "warning",
-        "source": "msl-ssg-srf01",
+        "source": "host-srf01",
         "source_type": "node"
     },
     {
@@ -174,7 +174,7 @@ MOCK_EVENTS = [
             "reason": "invalid_password"
         },
         "cluster_name": "CL_ID_1",
-        "node_name": "msl-ssg-srf03",
+        "node_name": "host-srf03",
         "category": "security",
         "domain": "authentication",
         "severity": "warning",
@@ -190,7 +190,7 @@ MOCK_FM_CXL_SETUP = {
             "type": "FM_DIRECT_CMMD",
             "Hosts": [
                 {
-                    "host_name": "msl-ssg-cx03",
+                    "host_name": "host-cx03",
                     "host_port": 2,
                     "deinit_active": 1,
                     "host_port_type": "dh",
@@ -264,7 +264,7 @@ MOCK_FM_CXL_SETUP = {
             "type": "FM_DIRECT_CMMH",
             "Hosts": [
                 {
-                    "host_name": "msl-ssg-cx03",
+                    "host_name": "host-cx03",
                     "host_port": 2,
                     "deinit_active": 1,
                     "host_port_type": "dh",
@@ -424,7 +424,7 @@ MOCK_CXL_SETUP = {
             ],
         },
         {
-            "host_name": "msl-stg-emr03",
+            "host_name": "host-emr03",
             "host_port": 4,
             "deinit_active": 1,
             "host_port_type": "CXL_11",
@@ -559,7 +559,7 @@ MOCK_CXL_DEVICES = [
         "dev_id": 5,
         "dev_capacity": 272730423296,
         "dev_port": 5,
-        "hosts_attached": ["msl-stg-emr03"],
+        "hosts_attached": ["host-emr03"],
     },
     {
         "dev_id": 10,
@@ -577,7 +577,7 @@ MOCK_CXL_DEVICES = [
         "dev_id": 8,
         "dev_capacity": 274877906944,
         "dev_port": 8,
-        "hosts_attached": ["msl-stg-emr03"],
+        "hosts_attached": ["host-emr03"],
     },
     {
         "dev_id": 11,
@@ -591,7 +591,7 @@ MOCK_CXL_DEVICES = [
 MOCK_CXL_HOSTS = [
     {
         "id": 4,
-        "name": "msl-stg-emr03",
+        "name": "host-emr03",
         "mem_capacity": 547608330240,
         "host_target_ports": [5, 8],
     },

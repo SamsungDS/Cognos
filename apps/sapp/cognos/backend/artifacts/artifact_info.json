@@ -1,16 +1,3 @@
 {
-  "ARTIFACTS": [
-    {
-      "id": 1,
-      "name": "cognos_runner_mvp1.tar.gz",
-      "ARTIFACT_DETAILS": {
-        "release_name": "release name",
-        "release_date": "2026-03-01",
-        "feature_list": [
-          "feature_list 1"
-        ],
-        "release_notes": "release notes"
-      }
-    }
-  ]
+  "ARTIFACTS": []
 }

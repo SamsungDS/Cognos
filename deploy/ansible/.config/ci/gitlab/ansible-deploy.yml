@@ -8,7 +8,7 @@
     - printf '%s\n' "$CI_KEY" | tr -d '\r' > ~/.ssh/svk-ci-deploy
     - chmod 600 ~/.ssh/svk-ci-deploy
     - ansible-galaxy collection install -r collections/requirements.yml
-    - OS_TARGET=$(ssh -i ~/.ssh/svk-ci-deploy -o StrictHostKeyChecking=no root@$TARGET_VM.msl.lab
+    - OS_TARGET=$(ssh -i ~/.ssh/svk-ci-deploy -o StrictHostKeyChecking=no root@$TARGET_VM.$LAB_DOMAIN
         "source /etc/os-release;
         if [[ \$ID == ubuntu ]]; then echo ubuntu\${VERSION_ID%%.*};
         elif [[ \$ID == ol ]]; then echo ol\${VERSION_ID%%.*};
@@ -24,7 +24,7 @@
       echo "SCMC (GUI/RBAC) is not available on $OS_TARGET, deploying without it";;
       esac
     - bash scripts/release.sh --os "$OS_TARGET" --mock
-    - sed -i -e "s/hostname[0-9]\/host_ip[0-9]/$TARGET_VM.msl.lab/g" -e "s/<user name>/root/" hosts
+    - sed -i -e "s/hostname[0-9]\/host_ip[0-9]/$TARGET_VM.$LAB_DOMAIN/g" -e "s/<user name>/root/" hosts
     - 'echo "$ANSIBLE_VAULT_PASSWORD" > "$CI_PROJECT_DIR/.vault_pass"'
     - 'echo "vault_ansible_password: $ANSIBLE_VAULT_PASSWORD" > group_vars/all/passwords.yml'
     - 'ansible-vault encrypt group_vars/all/passwords.yml --vault-password-file "$CI_PROJECT_DIR/.vault_pass"'
@@ -38,7 +38,7 @@
       \"cognos_install_gui_enabled\": $COGNOS_INSTALL_GUI_ENABLED,
       \"cognos_rbac_enabled\": $COGNOS_RBAC_ENABLED}"
       --vault-password-file "$CI_PROJECT_DIR/.vault_pass"
-    - ssh -i ~/.ssh/svk-ci-deploy -o StrictHostKeyChecking=no root@$TARGET_VM.msl.lab
+    - ssh -i ~/.ssh/svk-ci-deploy -o StrictHostKeyChecking=no root@$TARGET_VM.$LAB_DOMAIN
         "rpm -q cognos-cxl-mock 2>/dev/null || dpkg-query -W cognos-cxl-mock"
   after_script:
     - rm -rf group_vars/all/passwords.yml

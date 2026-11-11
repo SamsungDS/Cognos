@@ -3405,13 +3405,13 @@ check("so does the pre-existing hostname selector",
 check("no backslash-escaped dot is built into any selector",
       'replace(".", "\\\\.")' in _amo_p, False)
 import re as _re_q
-_hr_p = "msl-ssg-cx03.msl.lab".replace(".", "[.]")
+_hr_p = "host-cx03.example.com".replace(".", "[.]")
 check("the character class still matches the host",
-      bool(_re_q.fullmatch(_hr_p + ":[0-9]+", "msl-ssg-cx03.msl.lab:9100")), True)
+      bool(_re_q.fullmatch(_hr_p + ":[0-9]+", "host-cx03.example.com:9100")), True)
 check("and still excludes another host",
-      bool(_re_q.fullmatch(_hr_p + ":[0-9]+", "other-host.msl.lab:9100")), False)
+      bool(_re_q.fullmatch(_hr_p + ":[0-9]+", "other-host.example.com:9100")), False)
 check("and does not let the dot match any character",
-      bool(_re_q.fullmatch(_hr_p + ":[0-9]+", "msl-ssg-cx03xmslxlab:9100")), False)
+      bool(_re_q.fullmatch(_hr_p + ":[0-9]+", "host-cx03xexamplexcom:9100")), False)
 
 # _synth_ts's colmap values are EITHER a metric name or a list of candidate
 # names. The code that explains an empty result passed the value straight to

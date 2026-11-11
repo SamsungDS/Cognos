@@ -232,11 +232,11 @@ def main() -> int:
 
         print("\nThe amoprof exporter instance is the SGLang host's")
         from amoprof.report.amoprof import _pick_gpu_node_instance as _pk
-        _insts = ["msl-ssg-cx03.msl.lab:9101", "msl-ssg-dgx1.msl.lab:9101",
-                  "msl-ssg-dgx3.msl.lab:9101"]
+        _insts = ["host-cx03.example.com:9101", "host-dgx1.example.com:9101",
+                  "host-dgx3.example.com:9101"]
         _check("alphabetical order no longer picks the memory node",
-               _pk(_insts, ["msl-ssg-dgx1.msl.lab:30000"])[0],
-               "msl-ssg-dgx1.msl.lab:9101")
+               _pk(_insts, ["host-dgx1.example.com:30000"])[0],
+               "host-dgx1.example.com:9101")
         _check("with no SGLang host known, it says the pick is a guess",
                "likely the wrong node" in _pk(_insts, [])[1], True)
     finally:

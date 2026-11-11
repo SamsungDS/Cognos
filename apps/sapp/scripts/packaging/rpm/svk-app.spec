@@ -83,11 +83,9 @@ cp %{_projectdir}/cognos/rbac/ecosystem.config.js ${INSTALL_PATH}/cognos/rbac/
 cp -r %{_projectdir}/cognos/rbac/core/bin/rbac-client-repo ${INSTALL_PATH}/cognos/rbac/core/bin/
 cp -r %{_projectdir}/cognos/rbac/core/bin/rbac-service ${INSTALL_PATH}/cognos/rbac/core/bin/
 cp %{_projectdir}/cognos/rbac/core/etc/rbac.yaml ${INSTALL_PATH}/cognos/rbac/core/etc/
-cp -r %{_projectdir}/cognos/rbac/core/bin/rbac-service/rbac-module ${INSTALL_PATH}/cognos/rbac/core/bin/rbac-service/
 cp %{_projectdir}/cognos/rbac/core/etc/ports.txt ${INSTALL_PATH}/cognos/rbac/core/etc/
 cp %{_projectdir}/cognos/rbac/core/etc/version.txt ${INSTALL_PATH}/cognos/rbac/core/etc/
 cp %{_projectdir}/cognos/rbac/core/etc/rbac_*.json ${INSTALL_PATH}/cognos/rbac/core/etc/
-cp -r %{_projectdir}/cognos/rbac/core/lib/licensing ${INSTALL_PATH}/cognos/rbac/core/lib/
 
 # copying Telegraf files
 mkdir -p -v ${INSTALL_PATH}/cognos/telegraf

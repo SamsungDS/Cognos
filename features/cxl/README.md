@@ -2,7 +2,6 @@
 
 ## Description
 Cognos CXL plugin interfaces with connected CXL devices downstream through fabric management and Cognos GUI upstream. It defines interfaces to read and update the CXL device state using fabric management interface. 
-For more details, see http://sj-confluence.ssi.samsung.com:8090/display/MPL/High+Level+Design+of+Samsung+Cognos+Management+Console.
 
 ## Supported Build and Runtime Platforms
 - Rockylinux 9
@@ -10,195 +9,14 @@ For more details, see http://sj-confluence.ssi.samsung.com:8090/display/MPL/High
 - Ubuntu 24
 - At least 4 CPU Cores with 8GB RAM.
 
-## Install build dependencies
-```bash
-./scripts/dependencies/install.sh
-```
+## Build
 
-### Cognos Dependencies
+cxl is built and tested with the rest of Cognos, from the repository root: see
+[Build](../../README.md#build) (`./build.sh cxl`, and `./build.sh --test cxl` for its unit tests).
 
-The [dependencies install script](#Install-build-dependencies) will configure your build environment to pull packages from [SSG Nexus](http://ssg-nexus.msl.lab:8081).
-
-The following Cognos dependencies are installed automatically by the above script, but can be manually updated, if necessary, using your OS's package manager:
-
-- `cognos-core`
-- `cognos-core-dev` (Ubuntu) or `cognos-core-devel` (Rockylinux)
-- `cognos-grpc`
-- `cognos-go-modules`
-- `cognos-mgmt-fw`
-
-### Manual upgrade of Cognos Packages
-
-#### Rockylinux
-
-```bash
-dnf clean all
-dnf config-manager --add-repo=http://ssg-nexus.msl.lab:8081/repository/svk_yum_rocky9/
-dnf install cognos-core-devel cognos-grpc cognos-go-modules  -y
-dnf install cognos-mgmt-fw
-
-# Optional - install devel package
-dnf install cognos-mgmt-fw-devel -y
-```
-
-#### Oracle Linux
-```bash
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el10 -y
-dnf install cognos-core-devel cognos-grpc cognos-go-modules cognos-mgmt-fw -y
-
-# Optional - install devel package
-dnf install cognos-mgmt-fw-devel -y
-```
-
-#### Ubuntu
-
-```bash
-
-source /etc/os-release
-UBUNTU_VER="${VERSION_ID%%.*}"
-
-wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu${UBUNTU_VER} $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
-
-apt-get update
-apt-get install cognos-core-dev cognos-grpc cognos-go-modules -y
-apt-get install cognos-mgmt-fw -y
-# Optional - install devel package
-apt-get install cognos-mgmt-fw-dev -y
-```
-### Oracle Linux
-
-```bash
-source /etc/os-release
-MAJOR_VER="${VERSION_ID%%.*}"
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install cognos-core cognos-core-devel -y
-dnf install cognos-mgmt-fw -y
-# Optional - install devel package
-dnf install cognos-mgmt-fw-devel -y
-```
-
-### Get the Sources
-
-#### Cognos CXL
-
-git clone --recursive https://cxl-gitlab.ssi.samsung.com/dfs/svk/cxl.git
-
-#### Mock device configuration
+## Mock device configuration
 
 Cognos CXL does not need the cxl_memory_box library. The sample CXL device configuration is kept in this repository as `config/input.json`. The unit tests use it, and the release and mock packages install it to `/usr/local/svk/feature_modules/cxl/config/input.json`.
-
-## Building and executing unit tests
-
-- Execute `./scripts/build.sh` script from the top level directory. The `-h` option will show what options are available for building Cognos CXL Plugin:
-
-```bash
-./scripts/build.sh -h
-Build script for Cognos CXL Plugin
-
-Syntax: build.sh [-t|c|h|p|r|f]
-options:
--t | --build-tests
-  Build the unit tests for Cognos Framework.
--c | --with-coverage
-  Build with code coverage report. Must build unit tests for this.
--h | --help
-  Print this help.
--p | --install-prefix
-  Install libraries and related files to specified dir.
--r | --release
-  Release build. Generates a tarball called cognos-core-<version>.tgz by default.
--f | --filename
-  Filename prefix to use for release tarball. Only applicable when building with release flag.
--b | --build-package
-  Generate Cognos CXL FW RPMs/DEB packages.
--i | --install-path
-  Path that RPMs should install svk cxl to (Default: /usr/local/svk/cxl). Only applicable when building with release flag.
---mock
-  Mock build: compile the mock CXL device adapter (MOCK=1) and name the packages cognos-cxl-mock. Usage ex: scripts/build.sh --mock
-```
-
-### Unit Tests and Code Coverage
-
-Execute the following script to build with unit tests, and display code coverage results:
-
-```bash
-#mock mode:
-./scripts/build.sh --mock -t -c
-
-#hardware mode
-./scripts/build.sh -t -c
-
-e.g. output
-
-[100%] Built target cxl_ut
-~/cxl/svk-cxl/cxl/build/tests ~/cxl/svk-cxl/cxl/build ~/cxl/svk-cxl/cxl
-Running unit tests...
-Test project /home/mandar.s/cxl/svk-cxl/cxl/build/tests
-      Start  1: ScHostTest.ParameterizedConstructor
- 1/19 Test  #1: ScHostTest.ParameterizedConstructor ............   Passed    0.07 sec
-      Start  2: ScHostTest.GetCompositeObj
- 2/19 Test  #2: ScHostTest.GetCompositeObj .....................   Passed    0.08 sec
-      Start  3: ScHostTest.EmptyHostNameTest
- 3/19 Test  #3: ScHostTest.EmptyHostNameTest ...................   Passed    0.18 sec
-      Start  4: ScHostTest.ValidHostNameAndPort
- 4/19 Test  #4: ScHostTest.ValidHostNameAndPort ................   Passed    0.15 sec
-      Start  5: ScHostTest.ValidScId
- 5/19 Test  #5: ScHostTest.ValidScId ...........................   Passed    0.13 sec
-      Start  6: ScHostTest.ValidDeviceName
- 6/19 Test  #6: ScHostTest.ValidDeviceName .....................   Passed    0.14 sec
-      Start  7: ScHostTest.InvalidHostNameException
- 7/19 Test  #7: ScHostTest.InvalidHostNameException ............   Passed    0.06 sec
-      Start  8: ScHostTest.InvalidPortValue
- 8/19 Test  #8: ScHostTest.InvalidPortValue ....................   Passed    0.07 sec
-      Start  9: ScHostTest.ZeroCapacity
- 9/19 Test  #9: ScHostTest.ZeroCapacity ........................   Passed    0.06 sec
-      Start 10: ScHostTest.ValidCapacity
-10/19 Test #10: ScHostTest.ValidCapacity .......................   Passed    0.07 sec
-      Start 11: ScHostTest.OverCapacity
-11/19 Test #11: ScHostTest.OverCapacity ........................   Passed    0.05 sec
-      Start 12: ScHostTest.TargetPorts
-12/19 Test #12: ScHostTest.TargetPorts .........................   Passed    0.06 sec
-      Start 13: ScIdTest.ParameterizedConstructor
-13/19 Test #13: ScIdTest.ParameterizedConstructor ..............   Passed    0.05 sec
-      Start 14: ScIdTest.ParameterizedConstructor_LargeValue
-14/19 Test #14: ScIdTest.ParameterizedConstructor_LargeValue ...   Passed    0.06 sec
-      Start 15: ScIdTest.GetScId
-15/19 Test #15: ScIdTest.GetScId ...............................   Passed    0.05 sec
-      Start 16: ScIdTest.SetScId
-16/19 Test #16: ScIdTest.SetScId ...............................   Passed    0.05 sec
-      Start 17: ScIdTest.SetScId_NegativeValue
-17/19 Test #17: ScIdTest.SetScId_NegativeValue .................   Passed    0.05 sec
-      Start 18: ScIdTest.HashScId
-18/19 Test #18: ScIdTest.HashScId ..............................   Passed    0.05 sec
-      Start 19: ScIdTest.HashScId_DistinctObjectsSameValue
-19/19 Test #19: ScIdTest.HashScId_DistinctObjectsSameValue .....   Passed    0.06 sec
-
-100% tests passed, 0 tests failed out of 19
-
-Total Test time (real) =   1.57 sec
-~/cxl/svk-cxl/cxl/build ~/cxl/svk-cxl/cxl
-Generating coverage reports
-```
-
-#### Build
-
-cd cxl && scripts/build.sh
-
-
-#### Build RPMS
-e.g.
-cd cxl && scripts/build.sh -r -b
-
-
-#### Build Debian pacakages
-e.g.
-cd cxl && scripts/build.sh -r -b
-
-Note: for mock binary use "--mock" flag
-
 
 ## Contributing
 Thank you for your interest in contributing to Cognos CXL
@@ -227,10 +45,9 @@ Thank you for your interest in contributing to Cognos CXL
 ### Coding Style Guidelines
 
 Cognos CXL uses style check tools for C++ code, shell and python scripts.
-As a prerequisite, install the tools with specific versions mentioned at http://sj-confluence.ssi.samsung.com:8090/pages/viewpage.action?pageId=322801744#SVKCodingStandards&Styles-Consensus to be in sync with the gitlab pipelines.
+As a prerequisite, install the tools below.
 
 #### Running shellcheck
-
 
 ```
 shellcheck --version
@@ -300,7 +117,7 @@ pycodestyle ./ --show-source --show-pep8
 
    MR: !123
 
-   Signed-off-by: John Doe <john.doe@samsung.com>
+   Signed-off-by: John Doe <john.doe@example.com>
    ```
 <!--
   -- The strictness of the `Problem: ` prefix requirement is controversial[1].
@@ -404,11 +221,10 @@ controls the adapter:
 - "fpga_temp_warn_C": FPGA temperature above which an MP device reports
   "Warning" (default 85).
 
-
 ## Authors and acknowledgment
 * Sukesh Nagaraja
 * Rajashekhar Payagond
 * Mandar Sawant
 * Samaresh Singh
 ## License
-For open source projects, say how it is licensed.
+Cognos is licensed under the Apache License, Version 2.0: see [LICENSE](../../LICENSE).

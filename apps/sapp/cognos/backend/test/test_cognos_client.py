@@ -169,7 +169,7 @@ def test_intialize_host_devices_with_direct_devices(mocker):
     # test with no alias hostname
     mocker.patch(
         "socket.gethostbyaddr",
-        return_value=('msl-ssg-vmxx.msl.lab', None, ['xxx.xxx.xx.xx'])
+        return_value=('host-vmxx.example.com', None, ['xxx.xxx.xx.xx'])
     )
     cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
@@ -178,7 +178,7 @@ def test_intialize_host_devices_with_direct_devices(mocker):
     # test with alias hostname
     mocker.patch(
         "socket.gethostbyaddr",
-        return_value=('msl-ssg-vmxx.msl.lab', ['msl-ssg-vmxx'], ['x.x.xx.xx'])
+        return_value=('host-vmxx.example.com', ['host-vmxx'], ['x.x.xx.xx'])
     )
     cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
@@ -273,7 +273,7 @@ def test_initialize_host_devices(mocker):
     # test with no alias hostname
     mocker.patch(
         "socket.gethostbyaddr",
-        return_value=('msl-ssg-vmxx.msl.lab', None, ['xxx.xxx.xx.xx'])
+        return_value=('host-vmxx.example.com', None, ['xxx.xxx.xx.xx'])
     )
     cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()
@@ -282,7 +282,7 @@ def test_initialize_host_devices(mocker):
     # test with alias hostname
     mocker.patch(
         "socket.gethostbyaddr",
-        return_value=('msl-ssg-vmxx.msl.lab', ['msl-ssg-vmxx'], ['x.x.xx.xx'])
+        return_value=('host-vmxx.example.com', ['host-vmxx'], ['x.x.xx.xx'])
     )
     cognos = Cognos(CAL_LOGGER, mock=True)
     cognos._initialize_hosts_devices()

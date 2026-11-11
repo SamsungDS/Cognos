@@ -1,8 +1,8 @@
 """Stub Prometheus with three hosts publishing the same exporters.
 
-  msl-ssg-dgx1   sglang :30000, node_exporter :9100, amoprof service :9101
-  msl-ssg-dgx3   node_exporter :9100, amoprof service :9101   (another GPU node)
-  msl-ssg-cx03   node_exporter :9100, amoprof service :9101   (the memory node)
+  host-dgx1   sglang :30000, node_exporter :9100, amoprof service :9101
+  host-dgx3   node_exporter :9100, amoprof service :9101   (another GPU node)
+  host-cx03   node_exporter :9100, amoprof service :9101   (the memory node)
 
 Only dgx1 serves SGLang.  Every host's amoprof service publishes the same
 gauge names with different values, and every node_exporter publishes
@@ -18,7 +18,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-DGX1, DGX3, CX03 = "msl-ssg-dgx1.msl.lab", "msl-ssg-dgx3.msl.lab", "msl-ssg-cx03.msl.lab"
+DGX1, DGX3, CX03 = "host-dgx1.example.com", "host-dgx3.example.com", "host-cx03.example.com"
 MIB = 1048576.0
 
 # (metric, labels, base, slope) -- slope 0 for gauges

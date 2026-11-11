@@ -1,5 +1,3 @@
-# Author: June Liu
-# Contact: june.liu@samsung.com
 ---
 - name: Check if port is in use using ss
   ansible.builtin.shell: |

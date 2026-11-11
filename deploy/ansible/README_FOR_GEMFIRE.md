@@ -18,10 +18,6 @@ This project provides an end-to-end Ansible automation suite for deploying VMwar
 
 ## Prerequisites
 
-Please visit the below confluence page to learn about the basics of YCSB/GemFire Architecture:
-
-http://sj-confluence.ssi.samsung.com:8090/display/MPL/YCSB+Benchmark+for+MPP+Databases
-
 ### Hardware
 
 * gemfire_server:

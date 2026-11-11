@@ -18,7 +18,7 @@ cognos_gen_certs_org: "Samsung"
 cognos_gen_certs_org_unit: "MSL"
 
 # Email address for the organization
-cognos_gen_certs_email: "rdmsl@samsung.com"
+cognos_gen_certs_email: "admin@example.com"
 
 # Certificate validity in days
 cognos_gen_certs_days: 365

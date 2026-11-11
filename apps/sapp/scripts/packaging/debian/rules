@@ -75,11 +75,9 @@ override_dh_auto_install:
 	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-client-repo $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/
 	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-service $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/
 	cp $(CURDIR)/../cognos/rbac/core/etc/rbac.yaml $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
-	cp -r $(CURDIR)/../cognos/rbac/core/bin/rbac-service/rbac-module $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/bin/rbac-service/
 	cp $(CURDIR)/../cognos/rbac/core/etc/ports.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
 	cp $(CURDIR)/../cognos/rbac/core/etc/version.txt $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
 	cp $(CURDIR)/../cognos/rbac/core/etc/rbac_*.json $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/etc/
-	cp -r $(CURDIR)/../cognos/rbac/core/lib/licensing $(CURDIR)/$(INSTALL_PATH)/cognos/rbac/core/lib/
 
 
 

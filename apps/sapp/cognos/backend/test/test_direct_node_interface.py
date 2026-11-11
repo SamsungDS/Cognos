@@ -34,7 +34,7 @@ def test_list_devices(mocker):
 
 def test_mock_list_devices():
     direct_client = DirectAttachedNodeInterface(mock=True)
-    assert direct_client.list_devices("msl-ssg-srf01", "CL_ID_1")
+    assert direct_client.list_devices("host-srf01", "CL_ID_1")
 
 
 def test_list_devices_w_exception(mocker):
@@ -144,4 +144,4 @@ def test_get_device_info_w_exception(mocker):
 
 def test_mock_get_device_info():
     direct_client = DirectAttachedNodeInterface(mock=True)
-    assert direct_client.get_device_info("msl-ssg-srf01", "CL_ID_1", 33638416328448)
+    assert direct_client.get_device_info("host-srf01", "CL_ID_1", 33638416328448)

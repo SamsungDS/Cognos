@@ -49,6 +49,6 @@ def test_report_filename_ignores_bind_address_host(tmp_path):
     raw.mkdir()
     (raw / "setup_details.json").write_text(json.dumps(
         {"Host": "0.0.0.0", "Model": "gemma"}))
-    (raw / "gpu_config.json").write_text(json.dumps({"hostname": "msl-ssg-dgx1.msl.lab"}))
+    (raw / "gpu_config.json").write_text(json.dumps({"hostname": "host-dgx1.example.com"}))
     name = report_filename(raw, "combined", when=datetime(2026, 1, 1))
-    assert "_msl-ssg-dgx1_" in name and "_0_" not in name
+    assert "_host-dgx1_" in name and "_0_" not in name

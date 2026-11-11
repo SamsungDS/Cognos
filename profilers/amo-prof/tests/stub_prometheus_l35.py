@@ -1,7 +1,7 @@
 """Stub Prometheus mimicking Mandar's L3.5 topology.
 
-  msl-ssg-cx03.msl.lab:9101   amoprof service  -> amoprof_* only, NO node_disk_*
-  msl-ssg-cx03.msl.lab:9100   node_exporter    -> node_disk_* for two names:
+  host-cx03.example.com:9101   amoprof service  -> amoprof_* only, NO node_disk_*
+  host-cx03.example.com:9100   node_exporter    -> node_disk_* for two names:
         nvme2n1     field 11 = 0      (namespace head)
         nvme2c2n1   field 11 = live   (controller path)
 """
@@ -9,7 +9,7 @@ import json, re, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse, parse_qs
 
-HOST = "msl-ssg-cx03.msl.lab"
+HOST = "host-cx03.example.com"
 AMO, NODE = f"{HOST}:9101", f"{HOST}:9100"
 
 # metric -> list of (labels, value_fn)

@@ -32,86 +32,12 @@ install location or in the root of the repository when running in dev mode.
 Versioning follows the following schema
 ```svk-app.<major_verison>.<minor_version>.<patch_version>```
 
-## Installation
+## Build
 
-The prefered method to install SVK Application is through your OS package manager.
+sapp is built and tested with the rest of Cognos, from the repository root: see
+[Build](../../README.md#build) (`./build.sh sapp`, and `./build.sh --test sapp` for its unit tests).
 
-SVK Application's CI/CD automatically produces release artifacts which are published to [SSG-Nexus](http://ssg-nexus.msl.lab:8081/), which you can browse from within the SSG lab network.
-
-Release artifacts are also published to the [SVK Application Package Registry on Gitlab](https://cxl-gitlab.ssi.samsung.com/dfs/svk/sapp/-/packages).
-
-Enable the SSG Nexus repo for your distro, then install the `svk-app` packages via the package manager:
-
-### Ubuntu Installation
-
-Dependencies;
- - python3.10
- - python3-pip
- - python3.10-venv
- - nodejs
- - npm
- - Docker version 28.3.3, (https://docs.docker.com/engine/install/ubuntu/)
- - caddy
-
-Installation Instructions for svk-app debian package
-```bash
-wget --quiet --output-document /usr/share/keyrings/ssg-nexus.pgp  http://ssg-nexus.msl.lab:8081/repository/svk_common/public.pgp
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ssg-nexus.pgp] http://ssg-nexus.msl.lab:8081/repository/svk_apt_ubuntu22 $(. /etc/os-release && echo $UBUNTU_CODENAME) main" > /etc/apt/sources.list.d/ssg-nexus.list
-apt update
-apt-get install svk-app -y
-
-```
-
-#### Dependency, Installation & Configuration Steps
-Follow instructions here: http://sj-confluence.ssi.samsung.com:8090/x/re0jHw
-
-* You can perform smoke testing by the following 
-navigate to /usr/local/svk/svk-app/cognos/health/test folder
-```
-chmod +x ./smoke_test.sh
-./smoke_test.sh 
-```
-
-### Rockylinux Installation
-
-* Not Currently Supported *
-```bash
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install epel-release -y
-dnf install svk-app -y
-```
-
-
-### Oracle Linux
-set OEL major version number by running the following;
-
-if OEL 9
-```
-export MAJOR_VER=9
-```
-
-if OEL 10
-```
-export MAJOR_VER=10
-```
-
-```bash
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-core svk-mgmt-fw -y
-```
-
-```bash
-curl -fsSL http://ssg-nexus.msl.lab:8081/repository/svk_common/ssg-nexus-$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}").repo -o /etc/yum.repos.d/ssg-nexus.repo
-dnf install oracle-epel-release-el${MAJOR_VER} -y
-dnf install svk-core svk-mgmt-fw -y
-```
-
-#### Dependency, Installation & Configuration Steps
-http://sj-confluence.ssi.samsung.com:8090/x/qu0jHw
-
-
-### SSL Configuration
+## SSL Configuration
 SSL mode must be configured in cognos-app. This will enable https REST requests
 to reach cognos-app. 
 
@@ -123,18 +49,6 @@ cognos/backend/config/config.json
 "ssl_key": "<path to ssl key file",
 "ssl": false
 ```
-
-## Release build
-
-To create a release build, execute the `scripts/build.sh` script with the `--release` or `-r` flag:
-
-```bash
-./scripts/build.sh -r
-```
-
-This will produce either an RPM or Debian package, depending on whether the build is performed on a Rocky or Ubuntu OS repsectively.
-
-Release artifacts can be found in the `./build/artifacts` directory after executing the build script.
 
 ## Usage
 
@@ -176,9 +90,7 @@ sudo systemctl restart caddy
 
 ### Requesting changes
 
-To request changes,
-[log an issue](https://cxl-gitlab.ssi.samsung.com/dfs/svk/sapp/-/issues/new)
-and describe the problem you are facing.
+To request changes, log an issue in this repository and describe the problem you are facing.
 
 ### Sending patches
 
@@ -374,7 +286,7 @@ To run the python selenium tests, follow these steps
 
    MR: !123
 
-   Signed-off-by: John Doe <john.doe@samsung.com>
+   Signed-off-by: John Doe <john.doe@example.com>
    ```
 
    ```txt

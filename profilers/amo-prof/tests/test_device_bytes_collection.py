@@ -3,7 +3,7 @@
 
 Run: python3 tests/test_device_bytes_collection.py
 
-An L3 run on msl-ssg-dgx1 had device IOPS, latency and queue depth but no
+An L3 run on host-dgx1 had device IOPS, latency and queue depth but no
 device bandwidth anywhere -- the bandwidth-per-tier chart drew no L3 line and
 the device tile could only say "not measured".  Three causes:
 

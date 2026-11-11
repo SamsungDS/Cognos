@@ -31,8 +31,8 @@ cmake --build .
 ./cxt_ut
 
 #line coverage report
-gcovr -r ../.. --gcov-executable gcov-13 --exclude '/home/s1.nagaraja/dev_platform/cxl/tests/' --gcov-ignore-parse-errors 
+gcovr -r ../.. --gcov-executable gcov-13 --exclude '/path/to/cognos/features/cxl/tests/' --gcov-ignore-parse-errors 
 
 #branch coverage report
-gcovr -r ../.. --gcov-executable gcov-13 --exclude '/home/s1.nagaraja/dev_platform/cxl/tests/' --exclude-throw-branches --gcov-ignore-parse-errors -b 
+gcovr -r ../.. --gcov-executable gcov-13 --exclude '/path/to/cognos/features/cxl/tests/' --exclude-throw-branches --gcov-ignore-parse-errors -b 
 
