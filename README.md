@@ -92,6 +92,7 @@ standalone Python package with its own version and is not part of the Cognos pac
 | `build.sh` | Builds the packages of the components, or runs their unit tests. |
 | `VERSION` | The release line of the Cognos stack (`MAJOR.MINOR`). |
 | `LICENSE` | The Apache License, Version 2.0. |
+| `NOTICE` | The copyright notice. |
 
 Each component keeps its own `README.md` and its own `scripts/build.sh`.
 
@@ -154,4 +155,6 @@ controller to running the deployment and setting the passwords it needs, are in
 
 ## License
 
-Cognos is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+Copyright 2026 Samsung Electronics Co., Ltd.
+
+Cognos is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
