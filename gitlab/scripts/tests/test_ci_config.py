@@ -60,6 +60,24 @@ class CiConfigTest(unittest.TestCase):
         # A pipeline without the protected key fails at once, before any host is touched.
         self.assertLess(block.index('if [ -z "${DEPLOY_SSH_KEY:-}" ]'), block.index("base64 -d"))
 
+    def test_scans_install_what_the_tests_built_against(self):
+        # The component images hold no Cognos packages: without the upstream headers (gRPC, core) the C++ analysis
+        # cannot parse the sources and the quality gate fails. A scan installs the same upstream builds as the test.
+        scan = CONFIG[CONFIG.index("\n.scan:"):CONFIG.index("\n# ----", CONFIG.index("\n.scan:"))]
+        self.assertIn('- ./build.sh --native --upstream-only "$COMPONENT" --os "$OS"', scan)
+        self.assertLess(scan.index("before_script:"), scan.index("script:\n    - wget"))
+
+        def job(name):
+            start = CONFIG.index(f"\n{name}:\n") + 1
+            end = re.search(r"\n[^ \n#][^\n]*:\n", CONFIG[start:]).start() + start
+            return CONFIG[start:end]
+
+        for component in ("core", "mgmt-fw", "node", "ras", "slat", "me", "cxl"):
+            with self.subTest(component=component):
+                builds = lambda text: sorted(set(re.findall(r"job: (build [a-z-]+), optional: true", text)))
+                self.assertEqual(builds(job(f"scan {component}")), builds(job(f"test {component}")))
+        self.assertIn("  before_script: []\n", job("scan sapp"))  # its own scanner image, nothing to install
+
     def test_unit_tests_retry_once(self):
         block = CONFIG[CONFIG.index("\n.test:"):][:600]
         self.assertRegex(block, r"retry:\n\s+max: 1\n\s+when: \[script_failure\]")

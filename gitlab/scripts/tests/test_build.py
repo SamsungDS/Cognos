@@ -38,6 +38,14 @@ class BuildOptionsTest(TempDirTestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("unknown component nope", result.stderr)
 
+    def test_upstream_only_needs_native_and_not_test(self):
+        result = self.run_build("--upstream-only", "cxl")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("use it with --native", result.stderr)
+        result = self.run_build("--native", "--upstream-only", "--test", "cxl")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("do not go together", result.stderr)
+
     def test_extras_first(self):
         result = self.run_build("-h")
         self.assertIn("(extras core mgmt-fw node ras slat me cxl sapp)", result.stdout)
@@ -112,6 +120,25 @@ class UpstreamTest(TempDirTestCase):
         out, _ = self.install_upstream("extras", UPSTREAM_DEV_SET="0")
         self.assertIn("upstream extras: installed 1.6.2", out)
         self.assertIn("cognos-grpc", (self.tmp / "apt.log.query").read_text())
+
+    def test_upstream_only_installs_and_builds_nothing(self):
+        # Sonar scans: the upstream packages of the component (their headers), and no build. build_native checks
+        # that this machine runs --os, so the test uses this machine's OS name.
+        host = sh("bash", "-c", '. /etc/os-release && echo "$ID${VERSION_ID%%.*}"').stdout.strip()
+        d = self.root / f"features/core/build/artifacts/{host}"
+        d.mkdir(parents=True)
+        (d / "cognos-core-dev_1.7.0~dev.9-ubuntu24.04_amd64.deb").write_text("pkg")
+        (self.root / "features/ras/scripts").mkdir(parents=True)
+        build = self.root / "features/ras/scripts/build.sh"
+        build.write_text(f'#!/bin/sh\necho built > "{self.tmp}/ras-built"\n')
+        build.chmod(0o755)
+        script = (f'source "{self.root}/build.sh"; shopt -s nullglob; OS={host} PKG_EXT=deb SUDO= TEST= '
+                  'UPSTREAM_ONLY=1 COGNOS_VERSION=1 build_native ras')
+        out = sh("bash", "-c", script, env=self.env()).stdout
+        self.assertIn(f"== upstream packages of ras ({host})", out)
+        self.assertIn("upstream core: pipeline", out)
+        self.assertIn("cognos-core-dev_1.7.0~dev.9", self.log.read_text())
+        self.assertFalse((self.tmp / "ras-built").exists())
 
     def test_upstreams(self):
         script = (f'source "{self.root}/build.sh"; for c in extras core mgmt-fw node cxl me sapp; do '
