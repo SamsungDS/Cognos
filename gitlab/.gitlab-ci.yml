@@ -209,6 +209,12 @@ variables:
     GIT_DEPTH: 0
     SONAR_BRANCH: branch-cognos-monorepo
     SONAR_ARGS: -Dsonar.coverageReportPaths=build/reports/sonar_coverage.xml
+  # The scan's container starts from the component image, which has no Cognos packages: install the ones the
+  # component was built and tested against (their headers), from this pipeline's builds as the test job did.
+  before_script:
+    - !reference [.internal-ca, before_script]
+    - !reference [.version, before_script]
+    - ./build.sh --native --upstream-only "$COMPONENT" --os "$OS"
   script:
     - wget --no-verbose -P /tmp "$SONAR_SCANNER_URL"
     - unzip -q "/tmp/${SONAR_SCANNER_URL##*/}" -d /opt/sonar-scanner
@@ -292,7 +298,8 @@ test mgmt-fw:
 scan mgmt-fw:
   extends: [.scan, .mgmt-fw]
   rules: [!reference [.scan, rules], !reference [.mgmt-fw, rules]]
-  needs: [{job: test mgmt-fw, parallel: {matrix: [{OS: ubuntu24}]}}]
+  needs: [{job: test mgmt-fw, parallel: {matrix: [{OS: ubuntu24}]}}, {job: build extras, optional: true},
+          {job: build core, optional: true}]
   variables:
     SONAR_ARGS: -Dsonar.coverageReportPaths=build/reports/sonar_coverage.xml -Dsonar.go.coverage.reportPaths=build/reports/go_coverage.out
 
@@ -317,7 +324,7 @@ test node:
 scan node:
   extends: [.scan, .node]
   rules: [!reference [.scan, rules], !reference [.node, rules]]
-  needs: [{job: test node, parallel: {matrix: [{OS: ubuntu24}]}}]
+  needs: [{job: test node, parallel: {matrix: [{OS: ubuntu24}]}}, {job: build core, optional: true}]
   variables:
     SONAR_ARGS: -Dsonar.coverageReportPaths=build/reports/sonar_coverage.xml -Dsonar.python.coverage.reportPaths=build/reports/python_coverage.xml
 
@@ -342,7 +349,7 @@ test ras:
 scan ras:
   extends: [.scan, .ras]
   rules: [!reference [.scan, rules], !reference [.ras, rules]]
-  needs: [{job: test ras, parallel: {matrix: [{OS: ubuntu24}]}}]
+  needs: [{job: test ras, parallel: {matrix: [{OS: ubuntu24}]}}, {job: build core, optional: true}]
 
 # --- slat ------------------------------------------------------------------
 # The unit tests run Intel MLC, so they need the svk-slat runner.
@@ -367,7 +374,7 @@ test slat:
 scan slat:
   extends: [.scan, .slat]
   rules: [!reference [.scan, rules], !reference [.slat, rules]]
-  needs: [{job: test slat, parallel: {matrix: [{OS: ubuntu24}]}}]
+  needs: [{job: test slat, parallel: {matrix: [{OS: ubuntu24}]}}, {job: build core, optional: true}]
 
 # --- me --------------------------------------------------------------------
 # The unit tests need the svk-me runner, and read /etc/shadow as in me's own CI.
@@ -397,7 +404,8 @@ test me:
 scan me:
   extends: [.scan, .me]
   rules: [!reference [.scan, rules], !reference [.me, rules]]
-  needs: [{job: test me, parallel: {matrix: [{OS: ubuntu24}]}}]
+  needs: [{job: test me, parallel: {matrix: [{OS: ubuntu24}]}}, {job: build extras, optional: true},
+          {job: build core, optional: true}, {job: build mgmt-fw, optional: true}]
   variables:
     SONAR_ARGS: -Dsonar.coverageReportPaths=build/reports/sonar_coverage.xml -Dsonar.exclusions=**/mover_damo/damo_main**
 
@@ -431,7 +439,8 @@ test cxl:
 scan cxl:
   extends: [.scan, .cxl]
   rules: [!reference [.scan, rules], !reference [.cxl, rules]]
-  needs: [{job: test cxl, parallel: {matrix: [{OS: ubuntu24}]}}]
+  needs: [{job: test cxl, parallel: {matrix: [{OS: ubuntu24}]}}, {job: build extras, optional: true},
+          {job: build core, optional: true}, {job: build mgmt-fw, optional: true}]
 
 # --- sapp ------------------------------------------------------------------
 # Python backend and React UI: no build-wrapper, its own report files, and the
@@ -488,6 +497,7 @@ scan sapp:
   image:
     name: sonarsource/sonar-scanner-cli:5.0.1
     entrypoint: [""]
+  before_script: []
   script:
     - cd apps/sapp
     - >-

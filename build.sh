@@ -10,7 +10,7 @@ ALL_COMPONENTS=(extras core mgmt-fw node ras slat me cxl sapp)
 
 usage() {
     cat <<EOF
-Usage: ./build.sh [--native] [--os ubuntu24|ol10] [--mock] [--test] [<component> ...]
+Usage: ./build.sh [--native] [--os ubuntu24|ol10] [--mock] [--test|--upstream-only] [<component> ...]
 
 Builds the release packages of the given components, or of all of them
 (${ALL_COMPONENTS[*]}), in that order, and copies them to build/artifacts/<os>/.
@@ -28,6 +28,9 @@ Builds the release packages of the given components, or of all of them
   --test     Run the components' unit tests instead of building packages.
              The reports stay in each component's build/reports/. extras has
              no unit tests.
+  --upstream-only
+             Only install the upstream packages of the components (see
+             below), e.g. for a Sonar scan, which needs their headers.
   -h         Show this help.
 
 Version: COGNOS_VERSION if set, else ci/version.sh (the vX.Y.Z tag on HEAD,
@@ -159,7 +162,10 @@ build_native() {
     os_id=$(. /etc/os-release && echo "$ID${VERSION_ID%%.*}")
     [[ $os_id == "$OS" ]] || die "--native --os $OS, but this machine runs $os_id"
     dir=$(component_dir "$c")
-    echo "== $([[ -n $TEST ]] && echo test || echo build) $c ($OS), version $COGNOS_VERSION"
+    local what=build
+    [[ -z $TEST ]] || what="test"
+    [[ -z $UPSTREAM_ONLY ]] || what="upstream packages of"
+    echo "== $what $c ($OS), version $COGNOS_VERSION"
     if [[ -n $TEST && $c == extras ]]; then
         echo "extras has no unit tests"
         return
@@ -167,6 +173,7 @@ build_native() {
     for up in $(upstreams "$c"); do
         install_upstream "$up"
     done
+    [[ -z $UPSTREAM_ONLY ]] || return 0
     if [[ -n $TEST ]]; then
         (cd "$dir" && run_component_tests "$c")
         return
@@ -225,6 +232,7 @@ main() {
     OS=ubuntu24
     MOCK=
     TEST=
+    UPSTREAM_ONLY=
     REQUESTED=()
     while [[ $# -gt 0 ]]; do
         case $1 in
@@ -236,6 +244,7 @@ main() {
                 ;;
             --mock) MOCK=1 ;;
             --test) TEST=1 ;;
+            --upstream-only) UPSTREAM_ONLY=1 ;;
             -h | --help)
                 usage
                 exit 0
@@ -245,6 +254,9 @@ main() {
         esac
         shift
     done
+
+    [[ -z $UPSTREAM_ONLY || -n $NATIVE ]] || die "--upstream-only installs on this machine: use it with --native"
+    [[ -z $UPSTREAM_ONLY || -z $TEST ]] || die "--upstream-only and --test do not go together"
 
     case $OS in
         ubuntu24) PKG_EXT=deb ;;
@@ -282,7 +294,7 @@ main() {
         done
     fi
 
-    if [[ -z $TEST ]]; then
+    if [[ -z $TEST && -z $UPSTREAM_ONLY ]]; then
         echo "Packages in build/artifacts/$OS:"
         ls -1 "$ROOT/build/artifacts/$OS"
     fi
