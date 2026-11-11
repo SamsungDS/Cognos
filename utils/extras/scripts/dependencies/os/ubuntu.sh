@@ -7,6 +7,7 @@ GO_VERSION=1.22
 install_build_deps() {
     apt-get update
     BUILD_DEPS=(
+        build-essential
         cmake
         debhelper
         devscripts
