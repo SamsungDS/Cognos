@@ -747,6 +747,8 @@ test ci:
   before_script:
     - !reference [.internal-ca, before_script]
     - apt-get update -qq && apt-get install -y -qq --no-install-recommends shellcheck > /dev/null
+    # For the tests of gitlab/scripts/github-export.sh: the version the export uses.
+    - pip install --quiet --disable-pip-version-check git-filter-repo==2.34.0
   script:
     - gitlab/scripts/tests/run.sh --smoke
 
